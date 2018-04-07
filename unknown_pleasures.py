@@ -173,10 +173,10 @@ data_min = masked_data.min()
 # width = 55000
 # height = 40000
 #Wasatch Front Centered
-# origin = (413669, 4504336)
-# rotate = 75
-# width = 45000
-# height = 80000
+origin = (413669, 4504336)
+rotate = 75
+width = 45000
+height = 60000
 
 # Tetons
 # origin = (517390, 4805442)
@@ -202,19 +202,19 @@ data_min = masked_data.min()
 # height = 50000
 
 # Provo Cabin
-origin = (490117, 4487813)
-rotate = 225
-width = 4500
-height = 4000
+#origin = (490117, 4487813)
+#rotate = 225
+#width = 4500
+#height = 4000
 
 # smaller offsett = larger vertical scaling, "lower" viewpoint
-print_offset = 10
+print_offset = 80
 grey_max = 1
 
 # horizontal gap
-x_gap = 50
+x_gap = 500
 # vertical gap
-y_gap = 60
+y_gap = 200
 
 num_rows = int(height / y_gap)
 num_cols = int(width / x_gap)
@@ -335,7 +335,7 @@ for i, stripe in enumerate(new_row_elevs_list[::-1]):
     grey = math.pow(grey_max/num_rows * (len(new_row_elevs_list) - i), 4)
     color = str(grey)
     # Working from the back, add the polygon and the line for each slice
-    plt.fill_between(x_vals, stripe, facecolor = 'white', edgecolor = '0.75')
+    plt.fill_between(x_vals, stripe, facecolor = 'white', edgecolor = color)
     #plt.plot(stripe, color='white')
 # Try to set the ymin to be print_offset below the lowest elevation
 min_elev = min(new_row_elevs_list[0])  # this works becuase the front slice hides everything behind it... but we can get cooler than that
