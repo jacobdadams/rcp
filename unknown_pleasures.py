@@ -3,7 +3,23 @@ from osgeo import gdal
 import matplotlib.pyplot as plt
 import numpy as np
 
-in_dem_path = "c:\\temp\\gis\\dem_state.tif"
+
+# =========== TODO ===========
+# * Properly scale x-axis according to map units 
+# * Specify num_cols/rows instead of x/y_gap
+# * Compute bounding box of read area and change raster read method to only read this area
+#       Combine x and y into one loop (for sake of clean code)
+#       As generating x and y coords, keep track of min and max x and y (becomes bounding box)
+#       Do the x/y coord sys to row/col conversion for the min x/y for read origin
+#       change source_x/y_origin to min x/y values (used in x/y -> row/col translation for rows of points
+#       ReadAsArray(x_off, y_off, x_max-x_min, y_max-y_min)
+# * Create polygon of view area, lay over dem or hillshade?
+# * Change our offset to matplotlib's offset
+#   * Then, change facecolor to a gradient to add snowcaps or other elevation-dependent colors
+
+# in_dem_path = "c:\\gis\\data\\elevation\\ZionsNED10m\\zions_dem.tif"
+in_dem_path = "c:\\gis\\data\\elevation\\SaltLake10mDEM\\sl10m.tif"
+# in_dem_path = "c:\\gis\\data\\elevation\\tetonyellowstone10m\\tydem10m.tif"
 
 gdal.UseExceptions()
 
@@ -28,6 +44,7 @@ pixel_height = -transform[5]
 
 data = s_band.ReadAsArray(0, 0, cols, rows)
 masked_data = np.ma.masked_equal(data, nodata)
+del data
 
 data_min = masked_data.min()
 
@@ -122,30 +139,97 @@ data_min = masked_data.min()
 # height = 80000
 
 # valley south
-origin = (1619695, 3840010)
-rotate = 180
-width = 160000
-height = 140000
+# origin = (1619695, 3840010)
+# rotate = 180
+# width = 160000
+# height = 140000
+
+#paranauweep
+#origin = (324539, 4115968)
+# Pweep 2
+# origin = (322237, 4116722)
+# rotate = 80
+# width = 6500
+# height = 17000
+
+# # Main Zion's canyon
+# origin = (326574, 4125965)
+# rotate = 0
+# width = 1500
+# height = 4500
+
+# Wasatch Front
+# origin = (419938, 4515057)
+# rotate = 90
+# width = 35000
+# height = 50000
+#Wasatch Front Extended
+# origin = (406550, 4518541)
+# rotate = 70
+# width = 60000
+# height = 40000
+# origin = (413669, 4504336)
+# rotate = 70
+# width = 55000
+# height = 40000
+#Wasatch Front Centered
+# origin = (413669, 4504336)
+# rotate = 75
+# width = 45000
+# height = 80000
+
+# Tetons
+# origin = (517390, 4805442)
+# rotate = 290
+# width = 50000
+# height = 20000
+# Grand Teton
+# origin = (522823, 4829950)
+# rotate = 290
+# width = 25000
+# height = 15000
+
+# LCC down
+# origin = (447944, 4488521)
+# rotate = 270
+# width = 7500
+# height = 20000
+
+# Wasatch Back
+# origin = (476730, 4456888)
+# rotate = 265
+# width = 70000
+# height = 50000
+
+# Provo Cabin
+origin = (490117, 4487813)
+rotate = 225
+width = 4500
+height = 4000
+
+# smaller offsett = larger vertical scaling, "lower" viewpoint
+print_offset = 10
+grey_max = 1
 
 # horizontal gap
-x_gap = 250
+x_gap = 50
 # vertical gap
-y_gap = 1000
+y_gap = 60
 
 num_rows = int(height / y_gap)
 num_cols = int(width / x_gap)
 
+# Perspective seems to be a function of the print offset. low offset = looking from the ground. high offset = airplane view
+
 print("Rows: {}    Cols: {}".format(num_rows, num_cols))
 
-print_offset = 300
-
-# Y values for each row
+# Y values in coord sys for each row
 row_y_indexes = []
 # starting y value for nth row: previous starting y value + cos(theta)*y_gap
 #   next y value in nth row: previous y value - cos(90-theta)*x_gap
 row_y_origin = origin[1]
 for row in range(0, num_rows):  # build list of y-values in coord system for each row
-    row_ys = []  # list of y vals for this row
+    row_ys = []  # list of y vals in coord system for this row
     row_ys.append(int(row_y_origin))  # first y-val is the row origin point
 
     # calculate the next y values for each column in this row
@@ -161,7 +245,7 @@ for row in range(0, num_rows):  # build list of y-values in coord system for eac
     # Set the y value for the next row
     row_y_origin = row_y_origin + math.cos(math.radians(rotate)) * y_gap
 
-# X values for each row
+# X values in coord sys for each row
 row_x_indexes = []
 # starting x value for nth row: previous starting x value + sin(theta)*y_gap
 #   next y value in nth row: previous x value + sin(90-theta)*x_gap
@@ -188,7 +272,7 @@ for row in range(0, num_rows):  # build list of x-values in coord system for eac
 # for row in row_x_indexes:
 #     print(row)
 
-# Merge y, x values into tuples for each point for each row
+# Merge y, x values into tuples for each point (ie, for each column) for each row
 coord_rows = []
 for row_y, row_x in zip(row_y_indexes, row_x_indexes):
     current_row = []
@@ -198,7 +282,7 @@ for row_y, row_x in zip(row_y_indexes, row_x_indexes):
 # for row in coord_rows:
 #     print(row)
 
-# A list of lists of elevations x_gap apart horizontally. Each sub-list is y_gap apart vertically. The dataset has already been rotated
+# A list of lists of elevations x_gap apart horizontally. Each sub-list is y_gap apart vertically. Rotation was accomplished when the lists of x and y points in coord sys were generated
 row_elevs_list = []
 
 # coordinates: easting = x = cols, northing = y = rows
@@ -226,25 +310,39 @@ for row in coord_rows:
     row_elevs_list.append(row_elevs)
 
 
-elevs = [r for r in row_elevs_list[0]]
+#elevs = [r for r in row_elevs_list[0]]
 
 # shift each row of elevations up by i * print_offset for printing
+#   which makes it print_offset higher than the row before it
+# Maybe look at using matplotlib offsets rather than modifying the data. Then we might be able to add a gradient to the elevation facecolor, doing whitecapped mountains or something like that above a certain point.
 new_row_elevs_list = []
-for i in range(0, num_rows):
+for i, row in enumerate(row_elevs_list):
     offset = i * print_offset
     new_row_elevs = []
-    for val in row_elevs_list[i]:
+    for val in row:
         new_row_elevs.append(val + offset)
     new_row_elevs_list.append(new_row_elevs)
 
+del masked_data        
+    
 # Print it out
 y_start = row_elevs_list[0][0]
-x_vals = range(0, len(new_row_elevs_list[0]))
-for stripe in new_row_elevs_list[::-1]:
+x_vals = range(0, len(new_row_elevs_list[0])) # first collection of x-values used as x-axis, should probably get values from data- ???
+for i, stripe in enumerate(new_row_elevs_list[::-1]):
+    # Trying to set the color as a gradient fading to grey in the back
+    # color = '0.75' = 75% grey
+    # Take our scaling factor and raise it to a power, so that it stays darker for longer and then goes quickly to white- somewhere between 2 to 4 or 5
+    grey = math.pow(grey_max/num_rows * (len(new_row_elevs_list) - i), 4)
+    color = str(grey)
     # Working from the back, add the polygon and the line for each slice
-    plt.fill_between(x_vals, stripe, facecolor = 'black', edgecolor = 'white')
+    plt.fill_between(x_vals, stripe, facecolor = 'white', edgecolor = '0.75')
     #plt.plot(stripe, color='white')
-plt.ylim(ymin=data_min)
+# Try to set the ymin to be print_offset below the lowest elevation
+min_elev = min(new_row_elevs_list[0])  # this works becuase the front slice hides everything behind it... but we can get cooler than that
+
+# from https://dbader.org/blog/python-min-max-and-nested-lists, https://stackoverflow.com/questions/33269530/get-max-value-from-a-list-with-lists
+# min_elev = min(map(lambda x: min(x), row_elevs_list)) #  this gets the minimum elevation value found, which could lead to undesired results if the foreground is not the lowest elevation (looking down canyon instead of up, for example). So we'll just go with the first method
+plt.ylim(ymin = min_elev - print_offset)
 plt.axis('off')
 plt.show()
 
