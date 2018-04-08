@@ -306,8 +306,11 @@ print("{} {} {} {}".format(x_min_index, y_max_index, read_cols, read_rows))
 data = s_band.ReadAsArray(x_min_index, y_max_index, read_cols, read_rows)
     # have to use x_min_i, y_max_i because of different origins as above
 print(data.shape)
+print(data.min())
+print(data.mean())
 masked_data = np.ma.masked_equal(data, nodata)
 print(masked_data.shape)
+print(masked_data.mean())
 del data
 
 data_min = masked_data.min()
@@ -325,9 +328,12 @@ for row in coord_rows:
         x = coord_pair[1]
         # Get the raster indexes of the supplied coords
         # x is x coordinate, y is y coordinate in supplied coord system
-        source_x_index = int((x - source_x_origin) / pixel_width)
-        source_y_index = int((source_y_origin - y) / pixel_height)
-
+        #source_x_index = int((x - source_x_origin) / pixel_width)
+        #source_y_index = int((source_y_origin - y) / pixel_height)
+        source_x_index = int((x - x_min) / pixel_width)
+        source_y_index = int((y_max - y) / pixel_height)
+        
+        
         # Read from raster, which is accessed via [row, col]
         try:
             elev = masked_data[source_y_index, source_x_index]
