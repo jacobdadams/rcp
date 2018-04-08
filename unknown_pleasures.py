@@ -1,8 +1,8 @@
 import math
+import datetime
 from osgeo import gdal
 import matplotlib.pyplot as plt
 import numpy as np
-
 
 # =========== TODO ===========
 # * Properly scale x-axis according to map units 
@@ -17,9 +17,11 @@ import numpy as np
 # * Change our offset to matplotlib's offset
 #   * Then, change facecolor to a gradient to add snowcaps or other elevation-dependent colors
 
+start = datetime.datetime.now()
 # in_dem_path = "c:\\gis\\data\\elevation\\ZionsNED10m\\zions_dem.tif"
-in_dem_path = "c:\\gis\\data\\elevation\\SaltLake10mDEM\\sl10m.tif"
+# in_dem_path = "c:\\gis\\data\\elevation\\SaltLake10mDEM\\sl10m.tif"
 # in_dem_path = "c:\\gis\\data\\elevation\\tetonyellowstone10m\\tydem10m.tif"
+in_dem_path = "c:\\gis\\data\\elevation\\ZionsNED1m\\zions_dem_1m_smoothed-806080.tif"
 
 gdal.UseExceptions()
 
@@ -173,10 +175,10 @@ pixel_height = -transform[5]
 # width = 55000
 # height = 40000
 #Wasatch Front Centered
-origin = (413669, 4504336)
-rotate = 75
-width = 45000
-height = 60000
+# origin = (413669, 4504336)
+# rotate = 75
+# width = 45000
+# height = 60000
 
 # Tetons
 # origin = (517390, 4805442)
@@ -207,14 +209,20 @@ height = 60000
 #width = 4500
 #height = 4000
 
+#Angels Landing 
+origin = (326001, 4127476)
+rotate = 200
+width = 6000
+height = 9000
+
 # smaller offsett = larger vertical scaling, "lower" viewpoint
-print_offset = 80
+print_offset = 10
 grey_max = 1
 
 # horizontal gap
-x_gap = 500
-# vertical gap
-y_gap = 300
+x_gap = 60
+# vertical gap- you want about 80-100 rows
+y_gap = 90
 
 num_rows = int(height / y_gap)
 num_cols = int(width / x_gap)
@@ -242,6 +250,9 @@ y_min = origin[1]
 y_max = origin[1]
 x_min = origin[0]
 x_max = origin[0]
+
+print("xmin: {}    xmax: {}".format(x_min, x_max))
+print("ymin: {}    ymax: {}".format(y_min, y_max))
 
 for row in range(0, num_rows):  # build list of y,x-values in coord system for each row
 
@@ -291,27 +302,25 @@ x_max_index = int((x_max - source_x_origin) / pixel_width)
 y_min_index = int((source_y_origin - y_min) / pixel_width)
 y_max_index = int((source_y_origin - y_max) / pixel_width)
 read_cols = x_max_index - x_min_index
-read_rows = y_min_index - y_max_index  # why reversed ???
-    # If this were rotated different, would this be different? Or is it due to different origin points between UTM (origin: bottom left) and gdal (origin: top right(?))? Yes, gdalinfo says origin is in top left.
-
-print("y min: {}\ty max: {}".format(y_min, y_max))
-print("x min: {}\tx max: {}".format(x_min, x_max))
-
-print("y min index: {}\ty max index: {}".format(y_min_index, y_max_index))
-print("x min index: {}\tx max index: {}".format(x_min_index, x_max_index))
-
+# read_rows is reversed, just like source_y_origin-y_min is reversed, because raster origin is top left but ReadAsArray indexes from bottom left.
+read_rows = y_min_index - y_max_index
+print("xmin: {}\txmax: {}".format(x_min, x_max))
+print("ymin: {}\tymax: {}".format(y_min, y_max))
 print("{} {} {} {}".format(x_min_index, y_max_index, read_cols, read_rows))
 
+# TODO
+# This rotation is still off, and it's too late for my brain to think.
 
 data = s_band.ReadAsArray(x_min_index, y_max_index, read_cols, read_rows)
     # have to use x_min_i, y_max_i because of different origins as above
-print(data.shape)
-print(data.min())
-print(data.mean())
 masked_data = np.ma.masked_equal(data, nodata)
-print(masked_data.shape)
-print(masked_data.mean())
 del data
+
+# Subsetting the data as above is (usually) much faster and memory frugal than reading the entire raster in, especially with spinning disks and large DEMs. Leaving this here for comparison's sake.
+# data = s_band.ReadAsArray(0, 0, cols, rows)
+    # # have to use x_min_i, y_max_i because of different origins as above
+# masked_data = np.ma.masked_equal(data, nodata)
+# del data
 
 data_min = masked_data.min()
 
@@ -328,13 +337,14 @@ for row in coord_rows:
         x = coord_pair[1]
         # Get the raster indexes of the supplied coords
         # x is x coordinate, y is y coordinate in supplied coord system
-        #source_x_index = int((x - source_x_origin) / pixel_width)
-        #source_y_index = int((source_y_origin - y) / pixel_height)
+        # source_x_index = int((x - source_x_origin) / pixel_width)
+        # source_y_index = int((source_y_origin - y) / pixel_height)
+        # Because we subsetted the source raster, we use x_min/y_max instead of source_x/y_origin
         source_x_index = int((x - x_min) / pixel_width)
         source_y_index = int((y_max - y) / pixel_height)
         
         
-        # Read from raster, which is accessed via [row, col]
+        # Read from raster array, which is accessed via [row, col]
         try:
             elev = masked_data[source_y_index, source_x_index]
             if elev < data_min:
@@ -380,10 +390,11 @@ min_elev = min(new_row_elevs_list[0])  # this works becuase the front slice hide
 # min_elev = min(map(lambda x: min(x), row_elevs_list)) #  this gets the minimum elevation value found, which could lead to undesired results if the foreground is not the lowest elevation (looking down canyon instead of up, for example). So we'll just go with the first method
 plt.ylim(ymin = min_elev - print_offset)
 plt.axis('off')
+end = datetime.datetime.now()
 plt.show()
 
-print("y min: {}\ty max: {}".format(y_min, y_max))
-print("x min: {}\tx max: {}".format(x_min, x_max))
+# print("y min: {}\ty max: {}".format(y_min, y_max))
+# print("x min: {}\tx max: {}".format(x_min, x_max))
 
 #print(row_list[0])
 #print(row_elevs_list[0])
@@ -398,3 +409,4 @@ print("x min: {}\tx max: {}".format(x_min, x_max))
 # Close source file handle
 s_band = None
 s_fh = None
+print("Runtime: {}".format(end-start))
