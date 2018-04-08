@@ -292,6 +292,13 @@ y_min_index = int((source_y_origin - y_min) / pixel_width)
 y_max_index = int((source_y_origin - y_max) / pixel_width)
 read_cols = x_max_index - x_min_index
 read_rows = y_min_index - y_max_index  #TODO: why reversed ???
+                                       # If this were rotated different, would this be different?
+
+print("y min: {}\ty max: {}".format(y_min, y_max))
+print("x min: {}\tx max: {}".format(x_min, x_max))
+
+print("y min index: {}\ty max index: {}".format(y_min_index, y_max_index))
+print("x min index: {}\tx max index: {}".format(x_min_index, x_max_index))
 
 print("{} {} {} {}".format(x_min_index, y_min_index, read_cols, read_rows))
 
