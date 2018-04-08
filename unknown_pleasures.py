@@ -8,7 +8,7 @@ import numpy as np
 # * Properly scale x-axis according to map units 
 # * Specify num_cols/rows instead of x/y_gap
 # * Compute bounding box of read area and change raster read method to only read this area
-#       Combine x and y into one loop (for sake of clean code)
+#       # Combine x and y into one loop (for sake of clean code)
 #       As generating x and y coords, keep track of min and max x and y (becomes bounding box)
 #       Do the x/y coord sys to row/col conversion for the min x/y for read origin
 #       change source_x/y_origin to min x/y values (used in x/y -> row/col translation for rows of points
@@ -214,7 +214,7 @@ grey_max = 1
 # horizontal gap
 x_gap = 500
 # vertical gap
-y_gap = 200
+y_gap = 300
 
 num_rows = int(height / y_gap)
 num_cols = int(width / x_gap)
@@ -223,73 +223,68 @@ num_cols = int(width / x_gap)
 
 print("Rows: {}    Cols: {}".format(num_rows, num_cols))
 
+# ===== Generating Sample Point X and Y Coordinates =====
+
 # starting y value for nth row: previous starting y value + cos(theta)*y_gap
 #   next y value in nth row: previous y value - cos(90-theta)*x_gap
 # starting x value for nth row: previous starting x value + sin(theta)*y_gap
 #   next x value in nth row: previous x value + sin(90-theta)*x_gap
 
-# Y, X values in coord sys for each row
-row_y_indexes = []
-row_x_indexes = []
+# list of list of (y,x) tuples, each sublist is a row
+# y, x in coord system
+coord_rows = []  
 
 row_y_origin = origin[1]
 row_x_origin = origin[0]
-for row in range(0, num_rows):  # build list of y-values in coord system for each row
-    row_ys = []  # list of y vals in coord system for this row
-    row_xs = []  # list of x vals in coord system for this row
+
+# Track the min/max x/y; initial points are the origin
+y_min = origin[1]
+y_max = origin[1]
+x_min = origin[0]
+x_max = origin[0]
+
+for row in range(0, num_rows):  # build list of y,x-values in coord system for each row
+
+    # list of (y,x) vals in coord system for this row
+    current_row = []
+    # first y, x is the row origin points
+    current_row.append((row_y_origin, row_x_origin))  
     
-    row_ys.append(int(row_y_origin))  # first y-val is the row origin point    
-    row_xs.append(int(row_x_origin))  # first x-val is the row origin point
-    
+    # Set for next row
     prev_y_val = row_y_origin
     prev_x_val = row_x_origin
     
     # calculate the next y, x values for each column in this row
     for col in range(1, num_cols):  # start at 1 because we already added the origin
         y_val = prev_y_val - math.cos(math.radians(90 - rotate)) * x_gap
-        row_ys.append(int(y_val))  # add it to the list
           
         x_val = prev_x_val + math.sin(math.radians(90 - rotate)) * x_gap
-        row_xs.append(int(x_val))  # add it to the list
+        
+        current_row.append((y_val, x_val))
         
         prev_x_val = x_val  # set the x val for the next col in this row
         prev_y_val = y_val  # set the y val for the next col in this row
-        
-    # Add the list of y values for this row to the list of rows
-    row_y_indexes.append(row_ys)
-    row_x_indexes.append(row_xs)
+    
+        # min/max values
+        if y_val < y_min:
+            y_min = y_val
+        elif y_val > y_max:
+            y_max = y_val
+            
+        if x_val < x_min:
+            x_min = x_val
+        elif x_val > x_max:
+            x_max = x_val
+    
+    # add this row's (y,x) list to the list of rows
+    coord_rows.append(current_row)
+    
     # Set the y value for the next row
     row_y_origin = row_y_origin + math.cos(math.radians(rotate)) * y_gap
     row_x_origin = row_x_origin + math.sin(math.radians(rotate)) * y_gap    
 
-# X values in coord sys for each row
-#row_x_indexes = []
-
-
-#for row in range(0, num_rows):  # build list of x-values in coord system for each row
     
-
-
- #   for col in range(1, num_cols):  # start at 1 because we already added the origin
-
-
-
-
-# for row in row_y_indexes:
-#     print(row)
-# for row in row_x_indexes:
-#     print(row)
-
-# Merge y, x values into tuples for each point (ie, for each column) for each row
-coord_rows = []
-for row_y, row_x in zip(row_y_indexes, row_x_indexes):
-    current_row = []
-    for y, x in zip(row_y, row_x):
-        current_row.append((y, x))
-    coord_rows.append(current_row)
-# for row in coord_rows:
-#     print(row)
-
+# ===== Get the Actual Elevations from the Raster Array =====
 # A list of lists of elevations x_gap apart horizontally. Each sub-list is y_gap apart vertically. Rotation was accomplished when the lists of x and y points in coord sys were generated
 row_elevs_list = []
 
@@ -299,8 +294,8 @@ row_elevs_list = []
 for row in coord_rows:
     row_elevs = []
     for coord_pair in row:
-        x = coord_pair[1]
         y = coord_pair[0]
+        x = coord_pair[1]
         # Get the raster indexes of the supplied coords
         # x is x coordinate, y is y coordinate in supplied coord system
         source_x_index = int((x - source_x_origin) / pixel_width)
@@ -353,6 +348,9 @@ min_elev = min(new_row_elevs_list[0])  # this works becuase the front slice hide
 plt.ylim(ymin = min_elev - print_offset)
 plt.axis('off')
 plt.show()
+
+print("y min: {}\ty max: {}".format(y_min, y_max))
+print("x min: {}\tx max: {}".format(x_min, x_max))
 
 #print(row_list[0])
 #print(row_elevs_list[0])
