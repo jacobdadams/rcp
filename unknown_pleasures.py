@@ -223,49 +223,57 @@ num_cols = int(width / x_gap)
 
 print("Rows: {}    Cols: {}".format(num_rows, num_cols))
 
-# Y values in coord sys for each row
-row_y_indexes = []
 # starting y value for nth row: previous starting y value + cos(theta)*y_gap
 #   next y value in nth row: previous y value - cos(90-theta)*x_gap
+# starting x value for nth row: previous starting x value + sin(theta)*y_gap
+#   next x value in nth row: previous x value + sin(90-theta)*x_gap
+
+# Y, X values in coord sys for each row
+row_y_indexes = []
+row_x_indexes = []
+
 row_y_origin = origin[1]
+row_x_origin = origin[0]
 for row in range(0, num_rows):  # build list of y-values in coord system for each row
     row_ys = []  # list of y vals in coord system for this row
-    row_ys.append(int(row_y_origin))  # first y-val is the row origin point
-
-    # calculate the next y values for each column in this row
+    row_xs = []  # list of x vals in coord system for this row
+    
+    row_ys.append(int(row_y_origin))  # first y-val is the row origin point    
+    row_xs.append(int(row_x_origin))  # first x-val is the row origin point
+    
     prev_y_val = row_y_origin
+    prev_x_val = row_x_origin
+    
+    # calculate the next y, x values for each column in this row
     for col in range(1, num_cols):  # start at 1 because we already added the origin
         y_val = prev_y_val - math.cos(math.radians(90 - rotate)) * x_gap
         row_ys.append(int(y_val))  # add it to the list
-        prev_y_val = y_val  # set the y val for the next col in this row
-
-    # Add the list of y values for this row to the list of rows
-    row_y_indexes.append(row_ys)
-
-    # Set the y value for the next row
-    row_y_origin = row_y_origin + math.cos(math.radians(rotate)) * y_gap
-
-# X values in coord sys for each row
-row_x_indexes = []
-# starting x value for nth row: previous starting x value + sin(theta)*y_gap
-#   next y value in nth row: previous x value + sin(90-theta)*x_gap
-row_x_origin = origin[0]
-for row in range(0, num_rows):  # build list of x-values in coord system for each row
-    row_xs = []  # list of x vals for this row
-    row_xs.append(int(row_x_origin))  # first x-val is the row origin point
-
-    # calculate the next x values for each column in this row
-    prev_x_val = row_x_origin
-    for col in range(1, num_cols):  # start at 1 because we already added the origin
+          
         x_val = prev_x_val + math.sin(math.radians(90 - rotate)) * x_gap
         row_xs.append(int(x_val))  # add it to the list
+        
         prev_x_val = x_val  # set the x val for the next col in this row
-
-    # Add the list of x values for this row to the list of rows
+        prev_y_val = y_val  # set the y val for the next col in this row
+        
+    # Add the list of y values for this row to the list of rows
+    row_y_indexes.append(row_ys)
     row_x_indexes.append(row_xs)
+    # Set the y value for the next row
+    row_y_origin = row_y_origin + math.cos(math.radians(rotate)) * y_gap
+    row_x_origin = row_x_origin + math.sin(math.radians(rotate)) * y_gap    
 
-    # Set the x value for the next row
-    row_x_origin = row_x_origin + math.sin(math.radians(rotate)) * y_gap
+# X values in coord sys for each row
+#row_x_indexes = []
+
+
+#for row in range(0, num_rows):  # build list of x-values in coord system for each row
+    
+
+
+ #   for col in range(1, num_cols):  # start at 1 because we already added the origin
+
+
+
 
 # for row in row_y_indexes:
 #     print(row)
