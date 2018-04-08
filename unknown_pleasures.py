@@ -42,11 +42,11 @@ pixel_width = transform[1]
 pixel_height = -transform[5]
 #print("x orig: {} y orig: {} width: {} height: {}".format(source_x_origin, source_y_origin, pixel_width, pixel_height))
 
-data = s_band.ReadAsArray(0, 0, cols, rows)
-masked_data = np.ma.masked_equal(data, nodata)
-del data
+# data = s_band.ReadAsArray(0, 0, cols, rows)
+# masked_data = np.ma.masked_equal(data, nodata)
+# del data
 
-data_min = masked_data.min()
+# data_min = masked_data.min()
 
 # x vals = cols = j, y vals = rows = i
 # coords are in x, y (easting, northing)
@@ -256,8 +256,7 @@ for row in range(0, num_rows):  # build list of y,x-values in coord system for e
     
     # calculate the next y, x values for each column in this row
     for col in range(1, num_cols):  # start at 1 because we already added the origin
-        y_val = prev_y_val - math.cos(math.radians(90 - rotate)) * x_gap
-          
+        y_val = prev_y_val - math.cos(math.radians(90 - rotate)) * x_gap          
         x_val = prev_x_val + math.sin(math.radians(90 - rotate)) * x_gap
         
         current_row.append((y_val, x_val))
@@ -285,6 +284,25 @@ for row in range(0, num_rows):  # build list of y,x-values in coord system for e
 
     
 # ===== Get the Actual Elevations from the Raster Array =====
+
+# Translate min/max x/y from coord sys to row/col in raster
+x_min_index = int((x_min - source_x_origin) / pixel_width)
+x_max_index = int((x_max - source_x_origin) / pixel_width)
+y_min_index = int((source_y_origin - y_min) / pixel_width)
+y_max_index = int((source_y_origin - y_max) / pixel_width)
+read_cols = x_max_index - x_min_index
+read_rows = y_min_index - y_max_index  #TODO: why reversed ???
+
+print("{} {} {} {}".format(x_min_index, y_min_index, read_cols, read_rows))
+
+# 
+data = s_band.ReadAsArray(x_min_index, y_min_index, read_cols, read_rows)
+masked_data = np.ma.masked_equal(data, nodata)
+print(masked_data.shape)
+del data
+
+data_min = masked_data.min()
+
 # A list of lists of elevations x_gap apart horizontally. Each sub-list is y_gap apart vertically. Rotation was accomplished when the lists of x and y points in coord sys were generated
 row_elevs_list = []
 
