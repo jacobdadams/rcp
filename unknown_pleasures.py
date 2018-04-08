@@ -291,8 +291,8 @@ x_max_index = int((x_max - source_x_origin) / pixel_width)
 y_min_index = int((source_y_origin - y_min) / pixel_width)
 y_max_index = int((source_y_origin - y_max) / pixel_width)
 read_cols = x_max_index - x_min_index
-read_rows = y_min_index - y_max_index  #TODO: why reversed ???
-                                       # If this were rotated different, would this be different?
+read_rows = y_min_index - y_max_index  # why reversed ???
+    # If this were rotated different, would this be different? Or is it due to different origin points between UTM (origin: bottom left) and gdal (origin: top right(?))? Yes, gdalinfo says origin is in top left.
 
 print("y min: {}\ty max: {}".format(y_min, y_max))
 print("x min: {}\tx max: {}".format(x_min, x_max))
@@ -300,10 +300,12 @@ print("x min: {}\tx max: {}".format(x_min, x_max))
 print("y min index: {}\ty max index: {}".format(y_min_index, y_max_index))
 print("x min index: {}\tx max index: {}".format(x_min_index, x_max_index))
 
-print("{} {} {} {}".format(x_min_index, y_min_index, read_cols, read_rows))
+print("{} {} {} {}".format(x_min_index, y_max_index, read_cols, read_rows))
 
-# 
-data = s_band.ReadAsArray(x_min_index, y_min_index, read_cols, read_rows)
+
+data = s_band.ReadAsArray(x_min_index, y_max_index, read_cols, read_rows)
+    # have to use x_min_i, y_max_i because of different origins as above
+print(data.shape)
 masked_data = np.ma.masked_equal(data, nodata)
 print(masked_data.shape)
 del data
