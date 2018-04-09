@@ -1,11 +1,11 @@
 #*****************************************************************************
-# 
+#
 #  Project:  Parallel Raster Chunk Processing
 #  Purpose:  Applies various raster processes (various smoothing algorithms,
-#            etc) to arbitrarily large rasters by chunking it out into smaller 
+#            etc) to arbitrarily large rasters by chunking it out into smaller
 #            pieces and processes in parallel (if desired)
 #  Author:   Jacob Adams, jacob.adams@cachecounty.org
-# 
+#
 #*****************************************************************************
 # MIT License
 #
@@ -18,7 +18,7 @@
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
 #
-# The above copyright notice and this permission notice shall be included in 
+# The above copyright notice and this permission notice shall be included in
 # all copies or substantial portions of the Software.
 #
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
@@ -26,7 +26,7 @@
 # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 # AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN 
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 #*****************************************************************************
 
@@ -49,8 +49,11 @@ from scipy.ndimage.filters import generic_filter as gf
 class Chunk:
     pass
 
-# From Sridhar Ratnakumar, https://stackoverflow.com/questions/1094841/reusable-library-to-get-human-readable-version-of-file-size
 def sizeof_fmt(num, suffix='B'):
+    '''
+    Quick-and-dirty method for formating file size, from Sridhar Ratnakumar,
+    https://stackoverflow.com/questions/1094841/reusable-library-to-get-human-readable-version-of-file-size.
+    '''
     for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
         if abs(num) < 1024.0:
             return "%3.1f %s%s" % (num, unit, suffix)
@@ -58,6 +61,19 @@ def sizeof_fmt(num, suffix='B'):
     return "%.1f %s%s" % (num, 'Yi', suffix)
 
 def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
+    '''
+    Writes an np.array to a .asc file, which is the most accessible format for
+    mdenoise.exe.
+    in_array:       The input array, should be read using the supper_array
+                    technique from below.
+    asc_path:       The output path for the .asc file
+    xll:            X coordinate for lower left corner; actual position is
+                    irrelevant for mdenoise blur method below.
+    y11:            Y coordinate for lower left corner; see above.
+    c_size:         Square dimension of raster cell.
+    nodata:         NoData value for .asc file.
+    '''
+
     rows = in_array.shape[0]
     cols = in_array.shape[1]
     ncols = "ncols %d\n" %cols
@@ -83,6 +99,18 @@ def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
             f.write("\n")
 
 def blur_mean(in_array, filter_size):
+    '''
+    Performs a simple blur based on the average of nearby values. Uses circular
+    mask from Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-arrayself.
+    This is the equivalent of ArcGIS' Focal Mean Statistics raster processing
+    tool.
+    in_array:       The input array, should be read using the supper_array
+                    technique from below.
+    filter_size:    The diameter (in grid cells) of the circle used to define
+                    nearby pixels. A larger value creates more pronounced
+                    smoothing.
+    '''
+
     # Using circular mask from user Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-array
     radius = math.floor(filter_size/2)
     kernel = np.zeros((2*radius+1, 2*radius+1))
@@ -93,9 +121,16 @@ def blur_mean(in_array, filter_size):
 
     return circular_mean
 
-# From Mike Toews, https://gis.stackexchange.com/questions/9431/what-raster-smoothing-generalization-tools-are-available
 def blur_gauss(in_array, size):
+    '''
+    Performs a guassian blur on an array of elevations. Modified from Mike
+    Toews, https://gis.stackexchange.com/questions/9431/what-raster-smoothing-generalization-tools-are-availableself.
+    in_array:       The input array, should be read using the supper_array
+                    technique from below.
+    size:           The size (in grid cells) of the gaussian blur kernel
+    '''
 
+    # This comment block is old and left here for posterity
     # Change all NoData values to mean of valid values to fix issues with
     # massive (float32.max) NoData values completely overwhelming other array
     # data. Using mean instead of 0 gives a little bit more usable data on
@@ -128,6 +163,21 @@ def blur_gauss(in_array, size):
     return smoothed
 
 def mdenoise(in_array, t, n, v, tile=None):
+    '''
+    Smoothes an array of elevations using the mesh denoise algorithm by Sun et
+    al (2007), Fast and Effective Feature-Preserving Mesh Denoising
+    (http://www.cs.cf.ac.uk/meshfiltering/index_files/Page342.htm).
+    in_array:       The input array, should be read using the supper_array
+                    technique from below.
+    t:              Threshold parameter for mdenoise.exe; range [0,1]
+    n:              Normal updating iterations for mdenoise; try between 10
+                    and 50. Larger values increase smoothing effect and runtime
+    v:              Vertext updating iterations for mdenoise; try between 10
+                    and 90. Appears to affect what level of detail is smoothed
+                    away.
+    tile:           The name of the tile (optional). Used to differentiate the
+                    temporary files' filenames.
+    '''
     # Implements mdenoise algorithm by Sun et al (2007)
     # The stock mdenoise.exe runs out of memory with a window size of somewhere
     # between 1500 and 2000 (with a filter size of 15, which gives a total
@@ -189,6 +239,8 @@ def mdenoise(in_array, t, n, v, tile=None):
     return(mdenoised_array)
 
 def hillshade(in_array):
+    # This method has not been updated for multiprocessing; left as a
+    # placeholder for future sky model method.
     temp_rows = in_array.shape[0]
     temp_cols = in_array.shape[1]
 
@@ -204,7 +256,7 @@ def hillshade(in_array):
 
     # Default azimuth value not quite working right.
     # For whatever reason, Azimuth must be modified as 180 - az (if <0, +360)
-    # So for defautl of 315, pass 225 to DEMProcessing
+    # So for default of 315, pass 225 to DEMProcessing
     shade = gdal.DEMProcessing(hs_t_file, mem_s_fh, "hillshade", azimuth=225.0, zFactor=1.0, altitude=45.0, combined=True).ReadAsArray()
 
     # Currently returning as a float to handle input NoData as float. If we ever actually used this method, we'd probably want to handle this differently, perhaps by scaling the values to 1-255 and changing NoData to 0 (like the cli hillshade command)
@@ -217,7 +269,7 @@ def TPI(in_array, filter_size):
     in_array:       The input array, should be read using the supper_array
                     technique from below.
     filter_size:    The size, in cells, of the neighborhood used for the average
-                    (uses a square window)
+                    (uses a circular window)
     '''
 
     # Change all NoData values to mean of valid values to fix issues with
@@ -349,6 +401,10 @@ def ProcessSuperArray(chunk_info):
                                                         total_chunks, percent,
                                                         elapsed))
 
+    # We perform the read calls within the multiprocessing portion to avoid
+    # passing the entire raster to each process. This means we need to acquire
+    # a lock prior to reading in the chunk so that we're not trying to read
+    # the file at the same time.
     with lock:
         # ===== LOCK HERE =====
         # Open source file handle
@@ -431,7 +487,7 @@ def ProcessSuperArray(chunk_info):
 def lock_init(l):
     '''
     Mini helper method that allows us to use a global lock accross a pool of
-    processes.
+    processes. Used to safely read and write the input/output rasters.
     l:              mp.lock() created and passed as part of mp.pool
                     initialization
     '''
@@ -444,7 +500,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     Breaks a raster into smaller chunks for easier processing.
     in_dem_path:    Full path to input raster.
     out_dem_path:   Full path to resulting raster.
-    chunk_size:     Square dimension of data to be operated on.
+    chunk_size:     Square dimension of data chunk to process.
     overlap:        Data to be read beyond dimensions of chunk_size to ensure
                     methods that require neighboring pixels produce accurate
                     results on the borders. Should be at least 2x any filter
