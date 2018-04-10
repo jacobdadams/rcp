@@ -238,29 +238,51 @@ def mdenoise(in_array, t, n, v, tile=None):
 
     return(mdenoised_array)
 
-def hillshade(in_array):
-    # This method has not been updated for multiprocessing; left as a
-    # placeholder for future sky model method.
-    temp_rows = in_array.shape[0]
-    temp_cols = in_array.shape[1]
+def hillshade(in_array, az, alt): #c_size):
+    # # This method has not been updated for multiprocessing; left as a
+    # # placeholder for future sky model method.
+    # temp_rows = in_array.shape[0]
+    # temp_cols = in_array.shape[1]
+    #
+    # temp_dir = tempfile.gettempdir()
+    #
+    # mem_s_fh = gdal.GetDriverByName("MEM").Create('', temp_cols, temp_rows, 1, gdal.GDT_Float32)
+    # mem_s_fh.SetGeoTransform([0, cell_size, 0, 0, 0, cell_size])
+    # s_band = mem_s_fh.GetRasterBand(1)
+    # s_band.SetNoDataValue(s_nodata)
+    # s_band.WriteArray(in_array)
+    # # ==== NOT MULTI-PROCESS SAFE !!! ====
+    # hs_t_file = os.path.join(temp_dir, "hs_temp.tif")
+    #
+    # # Default azimuth value not quite working right.
+    # # For whatever reason, Azimuth must be modified as 180 - az (if <0, +360)
+    # # So for default of 315, pass 225 to DEMProcessing
+    # shade = gdal.DEMProcessing(hs_t_file, mem_s_fh, "hillshade", azimuth=225.0, zFactor=1.0, altitude=45.0, combined=True).ReadAsArray()
+    #
+    # # Currently returning as a float to handle input NoData as float. If we ever actually used this method, we'd probably want to handle this differently, perhaps by scaling the values to 1-255 and changing NoData to 0 (like the cli hillshade command)
+    # return shade.astype(float)
 
-    temp_dir = tempfile.gettempdir()
+    x = np.zeros(in_array.shape)
+    y = np.zeros(in_array.shape)
 
-    mem_s_fh = gdal.GetDriverByName("MEM").Create('', temp_cols, temp_rows, 1, gdal.GDT_Float32)
-    mem_s_fh.SetGeoTransform([0, cell_size, 0, 0, 0, cell_size])
-    s_band = mem_s_fh.GetRasterBand(1)
-    s_band.SetNoDataValue(s_nodata)
-    s_band.WriteArray(in_array)
-    # ==== NOT MULTI-PROCESS SAFE !!! ====
-    hs_t_file = os.path.join(temp_dir, "hs_temp.tif")
+    az = 90. - az
 
-    # Default azimuth value not quite working right.
-    # For whatever reason, Azimuth must be modified as 180 - az (if <0, +360)
-    # So for default of 315, pass 225 to DEMProcessing
-    shade = gdal.DEMProcessing(hs_t_file, mem_s_fh, "hillshade", azimuth=225.0, zFactor=1.0, altitude=45.0, combined=True).ReadAsArray()
+    azrad = az * np.pi / 180.
+    altrad = alt * np.pi / 180.
 
-    # Currently returning as a float to handle input NoData as float. If we ever actually used this method, we'd probably want to handle this differently, perhaps by scaling the values to 1-255 and changing NoData to 0 (like the cli hillshade command)
-    return shade.astype(float)
+    x, y = np.gradient(in_array, cell_size, cell_size, edge_order=2)
+
+    sinalt = np.sin(altrad)
+    cosaz = np.cos(azrad)
+    cosalt = np.cos(altrad)
+    sinaz = np.sin(azrad)
+    xx_plus_yy = x*x + y*y
+    shaded = (sinalt - (y * cosaz * cosalt - x * sinaz * cosalt)) / np.sqrt(1+xx_plus_yy)
+
+    #shaded = (np.sin(altrad) -
+    #         (y * np.cos(azrad) * np.cos(altrad) - x * np.sin(azrad) * np.cos(altrad))) / np.sqrt(1+(x*x + y*y))
+
+    return shaded*255
 
 def TPI(in_array, filter_size):
     '''
@@ -443,8 +465,8 @@ def ProcessSuperArray(chunk_info):
     elif method == "mdenoise":
         new_data = mdenoise(super_array, options["t"],
                             options["n"], options["v"], tile)
-    elif method == "hillshade":
-        new_data = hillshade(super_array)
+    #elif method == "hillshade":
+    #    new_data = hillshade(super_array)
     elif method == "clahe":
         new_data = exposure.equalize_adapthist(super_array.astype(int),
                                                options["filter_size"],
@@ -453,6 +475,8 @@ def ProcessSuperArray(chunk_info):
         new_data = TPI(super_array, options["filter_size"])
     elif method == "blur_mean":
         new_data = blur_mean(super_array, options["filter_size"])
+    elif method == "hillshade":
+        new_data = hillshade(super_array, options["az"], options["alt"])
     else:
         raise NotImplementedError("Method not implemented: %s" %method)
 
@@ -563,6 +587,13 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         if overlap < 2 * options["filter_size"]:
             overlap = 2* options["filter_size"]
 
+    elif method == "hillshade":
+        hillshade_opts = ["alt", "az"]
+        for opt in hillshade_opts:
+            if opt not in options:
+                raise ValueError("Required option {} not provided for method \
+                                 {}.".format(opt, method))
+
     else:
         raise NotImplementedError("Method not implemented: %s" %method)
 
@@ -592,6 +623,10 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     s_fh = None
 
     if verbose:
+        print("Method: {}".format(method))
+        print("Options:")
+        for opt in options:
+            print("\t{}: {}".format(opt, options[opt]))
         print("Preparing output file {}...".format(out_dem_path))
         print("\tOutput dimensions: {} rows by {} columns.".format(rows, cols))
         print("\tOutput size: {}".format(sizeof_fmt(rows * cols * 4)))
@@ -609,6 +644,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     # Close target file handle (causes entire file to be written to disk)
     t_band = None
     t_fh = None
+
 
     # This check will parallelize the process assuming a file that is square or
     # fairly close to it. A file with one dimension that vastly exceeds the
@@ -986,12 +1022,12 @@ if "__main__" in __name__:
     #smooth_dem = "e:\\lidar\\dem\\DEM-ft-md506050.tif"
     #s_dem = "e:\\lidar\\dem\\DEM-ft-80-90-90_hs.tif"
 
-    #in_dem = "c:\\temp\\gis\\dem_state.tif"
+    in_dem = "c:\\temp\\gis\\dem_state.tif"
     #smooth_dem = "c:\\temp\\gis\\dem_state_gauss30.tif"
-    #hs_dem = "c:\\temp\\gis\\lidar\\single_tests\\single-ft-md-803080_hs.tif"
+    hs_dem = "c:\\temp\\gis\\hstest\\dem_state_hs-rcp315.tif"
 
-    in_dem = "e:\\lidar\\canyons\\dem\\merged_raw_dem.vrt"
-    smooth_dem = "e:\\lidar\\canyons\\dem\\merged_raw_dem_gauss30.tif"
+    #in_dem = "e:\\lidar\\canyons\\dem\\merged_raw_dem.vrt"
+    #smooth_dem = "e:\\lidar\\canyons\\dem\\merged_raw_dem_gauss30.tif"
 
     # md105060 = n=10, t=0.50, v=60
 
@@ -1004,8 +1040,9 @@ if "__main__" in __name__:
 
     #RCProcessing(in_dem, smooth_dem, window_size, filter_f, "mdenoise", {"n":n, "t":t, "v":v})
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "mdenoise", {"n":n, "t":t, "v":v}, 3, False)
-    ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"filter_size":30}, 3, True)
+    #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"filter_size":30}, 3, True)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "TPI", {"filter_size":60}, num_threads=4, verbose=True)
+    ParallelRCP(in_dem, hs_dem, window_size, filter_f, "hillshade", {"az":315, "alt":45}, num_threads=4, verbose=True)
     # times = {}
     # for i in range(1, 11, 1):
     #     smooth_dem = "c:\\temp\\gis\\dem_state_ParallelRCPTest_{}.tif".format(i)
