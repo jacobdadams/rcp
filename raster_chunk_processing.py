@@ -1065,12 +1065,13 @@ if "__main__" in __name__:
     #s_dem = "e:\\lidar\\dem\\DEM-ft-80-90-90_hs.tif"
 
     #in_dem = "c:\\temp\\gis\\dem_state.tif"
-    smooth_dem = "c:\\temp\\gis\\dem_state_gauss30.tif"
-    hs_dem = "c:\\temp\\gis\\hstest\\dem_state_gauss30_sky.tif"
+    #smooth_dem = "c:\\temp\\gis\\dem_state_gauss30.tif"
+    #hs_dem = "c:\\temp\\gis\\hstest\\dem_state_gauss30_sky.tif"
     lum = "c:\\temp\\gis\\skyshade\\lum\\1_45_315_150.csv"
 
     #in_dem = "e:\\lidar\\canyons\\dem\\merged_raw_dem.vrt"
-    #smooth_dem = "e:\\lidar\\canyons\\dem\\merged_raw_dem_gauss30.tif"
+    smooth_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_md506050-lzw.tif"
+    hs_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_md506050_skymodel.tif"
 
     # md105060 = n=10, t=0.50, v=60
 
@@ -1085,7 +1086,7 @@ if "__main__" in __name__:
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "mdenoise", {"n":n, "t":t, "v":v}, 3, False)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"filter_size":30}, 3, True)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "TPI", {"filter_size":60}, num_threads=4, verbose=True)
-    ParallelRCP(smooth_dem, hs_dem, window_size, filter_f, "skymodel", {"lum_file":lum}, num_threads=4, verbose=True)
+    ParallelRCP(smooth_dem, hs_dem, 4000, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
     # times = {}
     # for i in range(1, 11, 1):
     #     smooth_dem = "c:\\temp\\gis\\dem_state_ParallelRCPTest_{}.tif".format(i)
