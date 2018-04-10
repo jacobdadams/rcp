@@ -660,10 +660,13 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         print("\tOutput dimensions: {} rows by {} columns.".format(rows, cols))
         print("\tOutput size: {}".format(sizeof_fmt(rows * cols * 4)))
         print("\tOutput NoData Value: {}".format(s_nodata))
+
     # Set up target file in preparation for future writes
     # If we've been given a vrt as a source, force the output to be geotiff
     if driver.LongName == 'Virtual Raster':
         driver = gdal.GetDriverByName('gtiff')
+    if os.path.exists(out_dem_path):
+        raise IOError("Output file {} already exists.".format(out_dem_path))
     t_fh = driver.Create(out_dem_path, cols, rows, 1, gdal.GDT_Float32)
     t_fh.SetGeoTransform(transform)
     t_fh.SetProjection(projection)
