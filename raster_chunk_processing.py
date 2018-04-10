@@ -263,8 +263,11 @@ def hillshade(in_array, az, alt): #c_size):
     # # Currently returning as a float to handle input NoData as float. If we ever actually used this method, we'd probably want to handle this differently, perhaps by scaling the values to 1-255 and changing NoData to 0 (like the cli hillshade command)
     # return shade.astype(float)
 
-    x = np.zeros(in_array.shape)
-    y = np.zeros(in_array.shape)
+    # Create new array with s_nodata values set to np.nan (for edges of raster)
+    nan_array = np.where(in_array == s_nodata, np.nan, in_array)
+
+    x = np.zeros(nan_array.shape)
+    y = np.zeros(nan_array.shape)
 
     # Conversion between mathematical and nautical azimuth
     az = 90. - az
@@ -272,7 +275,7 @@ def hillshade(in_array, az, alt): #c_size):
     azrad = az * np.pi / 180.
     altrad = alt * np.pi / 180.
 
-    x, y = np.gradient(in_array, cell_size, cell_size, edge_order=2)
+    x, y = np.gradient(nan_array, cell_size, cell_size, edge_order=2)
 
     sinalt = np.sin(altrad)
     cosaz = np.cos(azrad)
@@ -1058,7 +1061,7 @@ if "__main__" in __name__:
 
     in_dem = "c:\\temp\\gis\\dem_state.tif"
     #smooth_dem = "c:\\temp\\gis\\dem_state_gauss30.tif"
-    hs_dem = "c:\\temp\\gis\\hstest\\dem_state_hs-rcp315.tif"
+    hs_dem = "c:\\temp\\gis\\hstest\\dem_state_hs-rcpnan.tif"
 
     #in_dem = "e:\\lidar\\canyons\\dem\\merged_raw_dem.vrt"
     #smooth_dem = "e:\\lidar\\canyons\\dem\\merged_raw_dem_gauss30.tif"
