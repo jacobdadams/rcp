@@ -287,13 +287,14 @@ def hillshade(in_array, az, alt): #c_size):
     #shaded = (np.sin(altrad) -
     #         (y * np.cos(azrad) * np.cos(altrad) - x * np.sin(azrad) * np.cos(altrad))) / np.sqrt(1+(x*x + y*y))
 
-    return shaded*255
+    return shaded * 255
 
 def skymodel(in_array, lum_lines):
-    # initialize total skyshade for this chunk as 0's
+
+    # initialize skyshade as 0's
     skyshade = np.zeros((in_array.shape))
 
-    # Loop through luminance file lines to calculate multiple hillshades for that chunk
+    # Loop through luminance file lines to calculate multiple hillshades
     for line in lum_lines:
         az = float(line[0])
         alt = float(line[1])
@@ -486,8 +487,6 @@ def ProcessSuperArray(chunk_info):
     elif method == "mdenoise":
         new_data = mdenoise(super_array, options["t"],
                             options["n"], options["v"], tile)
-    #elif method == "hillshade":
-    #    new_data = hillshade(super_array)
     elif method == "clahe":
         new_data = exposure.equalize_adapthist(super_array.astype(int),
                                                options["filter_size"],
@@ -498,6 +497,8 @@ def ProcessSuperArray(chunk_info):
         new_data = blur_mean(super_array, options["filter_size"])
     elif method == "hillshade":
         new_data = hillshade(super_array, options["az"], options["alt"])
+    elif method == "skymodel":
+        new_data = skymodel(super_array, options["lum_lines"])
     else:
         raise NotImplementedError("Method not implemented: %s" %method)
 
@@ -623,7 +624,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                                  {}.".format(opt, method))
 
     else:
-        raise NotImplementedError("Method not implemented: %s" %method)
+        raise NotImplementedError("Method not recognized: %s" %method)
 
     gdal.UseExceptions()
 
@@ -674,7 +675,8 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     t_fh = None
 
     if method == "skymodel":
-        print("Reading in luminance file {}".format(options["lum_file"]))
+        if verbose:
+            print("Reading in luminance file {}".format(options["lum_file"]))
         lines = []
         with open(options["lum_file"], 'r') as l:
             reader = csv.reader(l)
@@ -1059,9 +1061,10 @@ if "__main__" in __name__:
     #smooth_dem = "e:\\lidar\\dem\\DEM-ft-md506050.tif"
     #s_dem = "e:\\lidar\\dem\\DEM-ft-80-90-90_hs.tif"
 
-    in_dem = "c:\\temp\\gis\\dem_state.tif"
-    #smooth_dem = "c:\\temp\\gis\\dem_state_gauss30.tif"
-    hs_dem = "c:\\temp\\gis\\hstest\\dem_state_hs-rcpnan.tif"
+    #in_dem = "c:\\temp\\gis\\dem_state.tif"
+    smooth_dem = "c:\\temp\\gis\\dem_state_gauss30.tif"
+    hs_dem = "c:\\temp\\gis\\hstest\\dem_state_gauss30_sky.tif"
+    lum = "c:\\temp\\gis\\skyshade\\lum\\1_45_315_150.csv"
 
     #in_dem = "e:\\lidar\\canyons\\dem\\merged_raw_dem.vrt"
     #smooth_dem = "e:\\lidar\\canyons\\dem\\merged_raw_dem_gauss30.tif"
@@ -1079,7 +1082,7 @@ if "__main__" in __name__:
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "mdenoise", {"n":n, "t":t, "v":v}, 3, False)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"filter_size":30}, 3, True)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "TPI", {"filter_size":60}, num_threads=4, verbose=True)
-    ParallelRCP(in_dem, hs_dem, window_size, filter_f, "hillshade", {"az":315, "alt":45}, num_threads=4, verbose=True)
+    ParallelRCP(smooth_dem, hs_dem, window_size, filter_f, "skymodel", {"lum_file":lum}, num_threads=4, verbose=True)
     # times = {}
     # for i in range(1, 11, 1):
     #     smooth_dem = "c:\\temp\\gis\\dem_state_ParallelRCPTest_{}.tif".format(i)
