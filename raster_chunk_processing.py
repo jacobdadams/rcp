@@ -303,7 +303,7 @@ def skymodel(in_array, lum_lines):
         shade = hillshade(in_array, az=az, alt=alt) * weight
 
         skyshade = skyshade + shade
-
+        shade = None
     return skyshade
 
 def TPI(in_array, filter_size):
@@ -529,6 +529,13 @@ def ProcessSuperArray(chunk_info):
         t_band = None
         t_fh = None
         # ===== UNLOCK HERE =====
+
+    # Explicit memory management
+    read_array = None
+    super_array = None
+    new_data = None
+    read_sub_array = None
+    temp_array = None
 
 def lock_init(l):
     '''
