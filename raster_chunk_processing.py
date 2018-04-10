@@ -38,6 +38,7 @@ import subprocess
 import contextlib
 import tempfile
 import warnings
+import csv
 import multiprocessing as mp
 #from scipy.signal import fftconvolve
 from astropy.convolution import convolve_fft
@@ -265,6 +266,7 @@ def hillshade(in_array, az, alt): #c_size):
     x = np.zeros(in_array.shape)
     y = np.zeros(in_array.shape)
 
+    # Conversion between mathematical and nautical azimuth
     az = 90. - az
 
     azrad = az * np.pi / 180.
@@ -283,6 +285,22 @@ def hillshade(in_array, az, alt): #c_size):
     #         (y * np.cos(azrad) * np.cos(altrad) - x * np.sin(azrad) * np.cos(altrad))) / np.sqrt(1+(x*x + y*y))
 
     return shaded*255
+
+def skymodel(in_array, lum_lines):
+    # initialize total skyshade for this chunk as 0's
+    skyshade = np.zeros((in_array.shape))
+
+    # Loop through luminance file lines to calculate multiple hillshades for that chunk
+    for line in lum_lines:
+        az = float(line[0])
+        alt = float(line[1])
+        weight = float(line[2])
+
+        shade = hillshade(in_array, az=az, alt=alt) * weight
+
+        skyshade = skyshade + shade
+
+    return skyshade
 
 def TPI(in_array, filter_size):
     '''
@@ -594,6 +612,13 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
 
+    elif method == "skymodel":
+        sky_opts = ["lum_file"]
+        for opt in sky_opts:
+            if opt not in options:
+                raise ValueError("Required option {} not provided for method \
+                                 {}.".format(opt, method))
+
     else:
         raise NotImplementedError("Method not implemented: %s" %method)
 
@@ -644,6 +669,15 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     # Close target file handle (causes entire file to be written to disk)
     t_band = None
     t_fh = None
+
+    if method == "skymodel":
+        print("Reading in luminance file {}".format(options["lum_file"]))
+        lines = []
+        with open(options["lum_file"], 'r') as l:
+            reader = csv.reader(l)
+            for line in reader:
+                lines.append(line)
+        options["lum_lines"] = lines
 
 
     # This check will parallelize the process assuming a file that is square or
