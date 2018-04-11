@@ -791,6 +791,8 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         # starts at 0, 25, 50, and 75).
         # pool.map() guarantees the results will be in order, but not
         # necessarily the processing.
+        # maxtasksperchild sets a limit on the number of tasks assigned to each
+        # process, hopefully limiting memory leaks within each subprocess
         with mp.Pool(processes=num_threads,
                      initializer=lock_init,
                      initargs=(l,),
