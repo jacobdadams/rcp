@@ -1,11 +1,11 @@
 #*****************************************************************************
-# 
+#
 #  Project:  Parallel Raster Chunk Processing
 #  Purpose:  Applies various raster processes (various smoothing algorithms,
-#            etc) to arbitrarily large rasters by chunking it out into smaller 
+#            etc) to arbitrarily large rasters by chunking it out into smaller
 #            pieces and processes in parallel (if desired)
 #  Author:   Jacob Adams, jacob.adams@cachecounty.org
-# 
+#
 #*****************************************************************************
 # MIT License
 #
@@ -18,7 +18,7 @@
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
 #
-# The above copyright notice and this permission notice shall be included in 
+# The above copyright notice and this permission notice shall be included in
 # all copies or substantial portions of the Software.
 #
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
@@ -26,7 +26,7 @@
 # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 # AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN 
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 #*****************************************************************************
 
@@ -38,6 +38,7 @@ import subprocess
 import contextlib
 import tempfile
 import warnings
+import csv
 import multiprocessing as mp
 #from scipy.signal import fftconvolve
 from astropy.convolution import convolve_fft
@@ -49,8 +50,11 @@ from scipy.ndimage.filters import generic_filter as gf
 class Chunk:
     pass
 
-# From Sridhar Ratnakumar, https://stackoverflow.com/questions/1094841/reusable-library-to-get-human-readable-version-of-file-size
 def sizeof_fmt(num, suffix='B'):
+    '''
+    Quick-and-dirty method for formating file size, from Sridhar Ratnakumar,
+    https://stackoverflow.com/questions/1094841/reusable-library-to-get-human-readable-version-of-file-size.
+    '''
     for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
         if abs(num) < 1024.0:
             return "%3.1f %s%s" % (num, unit, suffix)
@@ -58,6 +62,19 @@ def sizeof_fmt(num, suffix='B'):
     return "%.1f %s%s" % (num, 'Yi', suffix)
 
 def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
+    '''
+    Writes an np.array to a .asc file, which is the most accessible format for
+    mdenoise.exe.
+    in_array:       The input array, should be read using the supper_array
+                    technique from below.
+    asc_path:       The output path for the .asc file
+    xll:            X coordinate for lower left corner; actual position is
+                    irrelevant for mdenoise blur method below.
+    y11:            Y coordinate for lower left corner; see above.
+    c_size:         Square dimension of raster cell.
+    nodata:         NoData value for .asc file.
+    '''
+
     rows = in_array.shape[0]
     cols = in_array.shape[1]
     ncols = "ncols %d\n" %cols
@@ -83,6 +100,18 @@ def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
             f.write("\n")
 
 def blur_mean(in_array, filter_size):
+    '''
+    Performs a simple blur based on the average of nearby values. Uses circular
+    mask from Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-arrayself.
+    This is the equivalent of ArcGIS' Focal Mean Statistics raster processing
+    tool.
+    in_array:       The input array, should be read using the supper_array
+                    technique from below.
+    filter_size:    The diameter (in grid cells) of the circle used to define
+                    nearby pixels. A larger value creates more pronounced
+                    smoothing.
+    '''
+
     # Using circular mask from user Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-array
     radius = math.floor(filter_size/2)
     kernel = np.zeros((2*radius+1, 2*radius+1))
@@ -93,9 +122,16 @@ def blur_mean(in_array, filter_size):
 
     return circular_mean
 
-# From Mike Toews, https://gis.stackexchange.com/questions/9431/what-raster-smoothing-generalization-tools-are-available
 def blur_gauss(in_array, size):
+    '''
+    Performs a guassian blur on an array of elevations. Modified from Mike
+    Toews, https://gis.stackexchange.com/questions/9431/what-raster-smoothing-generalization-tools-are-availableself.
+    in_array:       The input array, should be read using the supper_array
+                    technique from below.
+    size:           The size (in grid cells) of the gaussian blur kernel
+    '''
 
+    # This comment block is old and left here for posterity
     # Change all NoData values to mean of valid values to fix issues with
     # massive (float32.max) NoData values completely overwhelming other array
     # data. Using mean instead of 0 gives a little bit more usable data on
@@ -128,6 +164,21 @@ def blur_gauss(in_array, size):
     return smoothed
 
 def mdenoise(in_array, t, n, v, tile=None):
+    '''
+    Smoothes an array of elevations using the mesh denoise algorithm by Sun et
+    al (2007), Fast and Effective Feature-Preserving Mesh Denoising
+    (http://www.cs.cf.ac.uk/meshfiltering/index_files/Page342.htm).
+    in_array:       The input array, should be read using the supper_array
+                    technique from below.
+    t:              Threshold parameter for mdenoise.exe; range [0,1]
+    n:              Normal updating iterations for mdenoise; try between 10
+                    and 50. Larger values increase smoothing effect and runtime
+    v:              Vertext updating iterations for mdenoise; try between 10
+                    and 90. Appears to affect what level of detail is smoothed
+                    away.
+    tile:           The name of the tile (optional). Used to differentiate the
+                    temporary files' filenames.
+    '''
     # Implements mdenoise algorithm by Sun et al (2007)
     # The stock mdenoise.exe runs out of memory with a window size of somewhere
     # between 1500 and 2000 (with a filter size of 15, which gives a total
@@ -188,27 +239,72 @@ def mdenoise(in_array, t, n, v, tile=None):
 
     return(mdenoised_array)
 
-def hillshade(in_array):
-    temp_rows = in_array.shape[0]
-    temp_cols = in_array.shape[1]
+def hillshade(in_array, az, alt): #c_size):
+    # # This method has not been updated for multiprocessing; left as a
+    # # placeholder for future sky model method.
+    # temp_rows = in_array.shape[0]
+    # temp_cols = in_array.shape[1]
+    #
+    # temp_dir = tempfile.gettempdir()
+    #
+    # mem_s_fh = gdal.GetDriverByName("MEM").Create('', temp_cols, temp_rows, 1, gdal.GDT_Float32)
+    # mem_s_fh.SetGeoTransform([0, cell_size, 0, 0, 0, cell_size])
+    # s_band = mem_s_fh.GetRasterBand(1)
+    # s_band.SetNoDataValue(s_nodata)
+    # s_band.WriteArray(in_array)
+    # # ==== NOT MULTI-PROCESS SAFE !!! ====
+    # hs_t_file = os.path.join(temp_dir, "hs_temp.tif")
+    #
+    # # Default azimuth value not quite working right.
+    # # For whatever reason, Azimuth must be modified as 180 - az (if <0, +360)
+    # # So for default of 315, pass 225 to DEMProcessing
+    # shade = gdal.DEMProcessing(hs_t_file, mem_s_fh, "hillshade", azimuth=225.0, zFactor=1.0, altitude=45.0, combined=True).ReadAsArray()
+    #
+    # # Currently returning as a float to handle input NoData as float. If we ever actually used this method, we'd probably want to handle this differently, perhaps by scaling the values to 1-255 and changing NoData to 0 (like the cli hillshade command)
+    # return shade.astype(float)
 
-    temp_dir = tempfile.gettempdir()
+    # Create new array with s_nodata values set to np.nan (for edges of raster)
+    nan_array = np.where(in_array == s_nodata, np.nan, in_array)
 
-    mem_s_fh = gdal.GetDriverByName("MEM").Create('', temp_cols, temp_rows, 1, gdal.GDT_Float32)
-    mem_s_fh.SetGeoTransform([0, cell_size, 0, 0, 0, cell_size])
-    s_band = mem_s_fh.GetRasterBand(1)
-    s_band.SetNoDataValue(s_nodata)
-    s_band.WriteArray(in_array)
-    # ==== NOT MULTI-PROCESS SAFE !!! ====
-    hs_t_file = os.path.join(temp_dir, "hs_temp.tif")
+    x = np.zeros(nan_array.shape)
+    y = np.zeros(nan_array.shape)
 
-    # Default azimuth value not quite working right.
-    # For whatever reason, Azimuth must be modified as 180 - az (if <0, +360)
-    # So for defautl of 315, pass 225 to DEMProcessing
-    shade = gdal.DEMProcessing(hs_t_file, mem_s_fh, "hillshade", azimuth=225.0, zFactor=1.0, altitude=45.0, combined=True).ReadAsArray()
+    # Conversion between mathematical and nautical azimuth
+    az = 90. - az
 
-    # Currently returning as a float to handle input NoData as float. If we ever actually used this method, we'd probably want to handle this differently, perhaps by scaling the values to 1-255 and changing NoData to 0 (like the cli hillshade command)
-    return shade.astype(float)
+    azrad = az * np.pi / 180.
+    altrad = alt * np.pi / 180.
+
+    x, y = np.gradient(nan_array, cell_size, cell_size, edge_order=2)
+
+    sinalt = np.sin(altrad)
+    cosaz = np.cos(azrad)
+    cosalt = np.cos(altrad)
+    sinaz = np.sin(azrad)
+    xx_plus_yy = x*x + y*y
+    shaded = (sinalt - (y * cosaz * cosalt - x * sinaz * cosalt)) / np.sqrt(1+xx_plus_yy)
+
+    #shaded = (np.sin(altrad) -
+    #         (y * np.cos(azrad) * np.cos(altrad) - x * np.sin(azrad) * np.cos(altrad))) / np.sqrt(1+(x*x + y*y))
+
+    return shaded * 255
+
+def skymodel(in_array, lum_lines):
+
+    # initialize skyshade as 0's
+    skyshade = np.zeros((in_array.shape))
+
+    # Loop through luminance file lines to calculate multiple hillshades
+    for line in lum_lines:
+        az = float(line[0])
+        alt = float(line[1])
+        weight = float(line[2])
+
+        shade = hillshade(in_array, az=az, alt=alt) * weight
+
+        skyshade = skyshade + shade
+        shade = None
+    return skyshade
 
 def TPI(in_array, filter_size):
     '''
@@ -217,7 +313,7 @@ def TPI(in_array, filter_size):
     in_array:       The input array, should be read using the supper_array
                     technique from below.
     filter_size:    The size, in cells, of the neighborhood used for the average
-                    (uses a square window)
+                    (uses a circular window)
     '''
 
     # Change all NoData values to mean of valid values to fix issues with
@@ -349,6 +445,10 @@ def ProcessSuperArray(chunk_info):
                                                         total_chunks, percent,
                                                         elapsed))
 
+    # We perform the read calls within the multiprocessing portion to avoid
+    # passing the entire raster to each process. This means we need to acquire
+    # a lock prior to reading in the chunk so that we're not trying to read
+    # the file at the same time.
     with lock:
         # ===== LOCK HERE =====
         # Open source file handle
@@ -387,8 +487,6 @@ def ProcessSuperArray(chunk_info):
     elif method == "mdenoise":
         new_data = mdenoise(super_array, options["t"],
                             options["n"], options["v"], tile)
-    elif method == "hillshade":
-        new_data = hillshade(super_array)
     elif method == "clahe":
         new_data = exposure.equalize_adapthist(super_array.astype(int),
                                                options["filter_size"],
@@ -397,6 +495,10 @@ def ProcessSuperArray(chunk_info):
         new_data = TPI(super_array, options["filter_size"])
     elif method == "blur_mean":
         new_data = blur_mean(super_array, options["filter_size"])
+    elif method == "hillshade":
+        new_data = hillshade(super_array, options["az"], options["alt"])
+    elif method == "skymodel":
+        new_data = skymodel(super_array, options["lum_lines"])
     else:
         raise NotImplementedError("Method not implemented: %s" %method)
 
@@ -428,10 +530,17 @@ def ProcessSuperArray(chunk_info):
         t_fh = None
         # ===== UNLOCK HERE =====
 
+    # Explicit memory management
+    read_array = None
+    super_array = None
+    new_data = None
+    read_sub_array = None
+    temp_array = None
+
 def lock_init(l):
     '''
     Mini helper method that allows us to use a global lock accross a pool of
-    processes.
+    processes. Used to safely read and write the input/output rasters.
     l:              mp.lock() created and passed as part of mp.pool
                     initialization
     '''
@@ -444,7 +553,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     Breaks a raster into smaller chunks for easier processing.
     in_dem_path:    Full path to input raster.
     out_dem_path:   Full path to resulting raster.
-    chunk_size:     Square dimension of data to be operated on.
+    chunk_size:     Square dimension of data chunk to process.
     overlap:        Data to be read beyond dimensions of chunk_size to ensure
                     methods that require neighboring pixels produce accurate
                     results on the borders. Should be at least 2x any filter
@@ -507,8 +616,22 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         if overlap < 2 * options["filter_size"]:
             overlap = 2* options["filter_size"]
 
+    elif method == "hillshade":
+        hillshade_opts = ["alt", "az"]
+        for opt in hillshade_opts:
+            if opt not in options:
+                raise ValueError("Required option {} not provided for method \
+                                 {}.".format(opt, method))
+
+    elif method == "skymodel":
+        sky_opts = ["lum_file"]
+        for opt in sky_opts:
+            if opt not in options:
+                raise ValueError("Required option {} not provided for method \
+                                 {}.".format(opt, method))
+
     else:
-        raise NotImplementedError("Method not implemented: %s" %method)
+        raise NotImplementedError("Method not recognized: %s" %method)
 
     gdal.UseExceptions()
 
@@ -536,14 +659,21 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     s_fh = None
 
     if verbose:
+        print("Method: {}".format(method))
+        print("Options:")
+        for opt in options:
+            print("\t{}: {}".format(opt, options[opt]))
         print("Preparing output file {}...".format(out_dem_path))
         print("\tOutput dimensions: {} rows by {} columns.".format(rows, cols))
         print("\tOutput size: {}".format(sizeof_fmt(rows * cols * 4)))
         print("\tOutput NoData Value: {}".format(s_nodata))
+
     # Set up target file in preparation for future writes
     # If we've been given a vrt as a source, force the output to be geotiff
     if driver.LongName == 'Virtual Raster':
         driver = gdal.GetDriverByName('gtiff')
+    if os.path.exists(out_dem_path):
+        raise IOError("Output file {} already exists.".format(out_dem_path))
     t_fh = driver.Create(out_dem_path, cols, rows, 1, gdal.GDT_Float32)
     t_fh.SetGeoTransform(transform)
     t_fh.SetProjection(projection)
@@ -553,6 +683,17 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     # Close target file handle (causes entire file to be written to disk)
     t_band = None
     t_fh = None
+
+    if method == "skymodel":
+        if verbose:
+            print("Reading in luminance file {}".format(options["lum_file"]))
+        lines = []
+        with open(options["lum_file"], 'r') as l:
+            reader = csv.reader(l)
+            for line in reader:
+                lines.append(line)
+        options["lum_lines"] = lines
+
 
     # This check will parallelize the process assuming a file that is square or
     # fairly close to it. A file with one dimension that vastly exceeds the
@@ -932,10 +1073,12 @@ if "__main__" in __name__:
 
     #in_dem = "c:\\temp\\gis\\dem_state.tif"
     #smooth_dem = "c:\\temp\\gis\\dem_state_gauss30.tif"
-    #hs_dem = "c:\\temp\\gis\\lidar\\single_tests\\single-ft-md-803080_hs.tif"
+    #hs_dem = "c:\\temp\\gis\\hstest\\dem_state_gauss30_sky.tif"
+    lum = "c:\\temp\\gis\\skyshade\\lum\\1_45_315_150.csv"
 
-    in_dem = "e:\\lidar\\canyons\\dem\\merged_raw_dem.vrt"
-    smooth_dem = "e:\\lidar\\canyons\\dem\\merged_raw_dem_gauss30.tif"
+    #in_dem = "e:\\lidar\\canyons\\dem\\merged_raw_dem.vrt"
+    smooth_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_md506050-lzw.tif"
+    hs_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_md506050_skymodel.tif"
 
     # md105060 = n=10, t=0.50, v=60
 
@@ -948,8 +1091,9 @@ if "__main__" in __name__:
 
     #RCProcessing(in_dem, smooth_dem, window_size, filter_f, "mdenoise", {"n":n, "t":t, "v":v})
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "mdenoise", {"n":n, "t":t, "v":v}, 3, False)
-    ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"filter_size":30}, 3, True)
+    #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"filter_size":30}, 3, True)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "TPI", {"filter_size":60}, num_threads=4, verbose=True)
+    ParallelRCP(smooth_dem, hs_dem, 4000, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
     # times = {}
     # for i in range(1, 11, 1):
     #     smooth_dem = "c:\\temp\\gis\\dem_state_ParallelRCPTest_{}.tif".format(i)

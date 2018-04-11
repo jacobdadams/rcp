@@ -12,5 +12,5 @@ We have not seen ECW read support included in the `conda-forge` GDAL libraries. 
 # Usage
 Most of these scripts are written to be run from the command line without any arguments; relevant input is set directly as variables within the script. We may add argument parsers as time allows.
 
-### Preacing To The Choir
+### Preaching To The Choir
 When you're working with raster files, 87.835% of your problems can be cleared up by correctly managing your projection and NoData values. If your projection is in meters but your elevation is in feet, remember to use the proper conversion factor or change one of them to match the other. Make sure you've got a valid NoData value set, as the scripts here expect it to exist (and make sense).
