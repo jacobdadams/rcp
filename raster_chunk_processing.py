@@ -46,9 +46,11 @@ from skimage import exposure
 from osgeo import gdal
 from scipy.ndimage.filters import generic_filter as gf
 
+
 # Just a simple class to hold the information about each chunk
 class Chunk:
     pass
+
 
 def sizeof_fmt(num, suffix='B'):
     '''
@@ -60,6 +62,7 @@ def sizeof_fmt(num, suffix='B'):
             return "%3.1f %s%s" % (num, unit, suffix)
         num /= 1024.0
     return "%.1f %s%s" % (num, 'Yi', suffix)
+
 
 def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
     '''
@@ -99,6 +102,7 @@ def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
             f.write(row)
             f.write("\n")
 
+
 def blur_mean(in_array, filter_size):
     '''
     Performs a simple blur based on the average of nearby values. Uses circular
@@ -121,6 +125,7 @@ def blur_mean(in_array, filter_size):
     circular_mean = gf(in_array, np.mean, footprint=kernel)
 
     return circular_mean
+
 
 def blur_gauss(in_array, size):
     '''
@@ -162,6 +167,7 @@ def blur_gauss(in_array, size):
         smoothed = convolve_fft(nan_array, g, nan_treatment='interpolate')
 
     return smoothed
+
 
 def mdenoise(in_array, t, n, v, tile=None):
     '''
@@ -239,7 +245,8 @@ def mdenoise(in_array, t, n, v, tile=None):
 
     return(mdenoised_array)
 
-def hillshade(in_array, az, alt): #c_size):
+
+def hillshade(in_array, az, alt):  #c_size):
     # # This method has not been updated for multiprocessing; left as a
     # # placeholder for future sky model method.
     # temp_rows = in_array.shape[0]
@@ -289,6 +296,7 @@ def hillshade(in_array, az, alt): #c_size):
 
     return shaded * 255
 
+
 def skymodel(in_array, lum_lines):
 
     # initialize skyshade as 0's
@@ -305,6 +313,7 @@ def skymodel(in_array, lum_lines):
         skyshade = skyshade + shade
         shade = None
     return skyshade
+
 
 def TPI(in_array, filter_size):
     '''
@@ -340,6 +349,7 @@ def TPI(in_array, filter_size):
         circular_mean = gf(nan_array, np.nanmean, footprint=kernel)
 
     return nan_array - circular_mean
+
 
 def ProcessSuperArray(chunk_info):
     '''
@@ -537,6 +547,7 @@ def ProcessSuperArray(chunk_info):
     read_sub_array = None
     temp_array = None
 
+
 def lock_init(l):
     '''
     Mini helper method that allows us to use a global lock accross a pool of
@@ -546,6 +557,7 @@ def lock_init(l):
     '''
     global lock
     lock = l
+
 
 def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                 options, num_threads=1, verbose=False):
@@ -580,7 +592,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                                  {}.".format(opt, method))
         # Check overlap against filter_size
         if overlap < 2 * options["filter_size"]:
-            overlap = 2* options["filter_size"]
+            overlap = 2 * options["filter_size"]
 
     elif method == "mdenoise":
         mdenoise_opts = ["t", "n", "v"]
@@ -596,7 +608,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
         if overlap < 2 * options["filter_size"]:
-            overlap = 2* options["filter_size"]
+            overlap = 2 * options["filter_size"]
 
     elif method == "TPI":
         TPI_opts = ["filter_size"]
@@ -605,7 +617,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
         if overlap < 2 * options["filter_size"]:
-            overlap = 2* options["filter_size"]
+            overlap = 2 * options["filter_size"]
 
     elif method == "blur_mean":
         mean_opts = ["filter_size"]
@@ -614,7 +626,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
         if overlap < 2 * options["filter_size"]:
-            overlap = 2* options["filter_size"]
+            overlap = 2 * options["filter_size"]
 
     elif method == "hillshade":
         hillshade_opts = ["alt", "az"]
@@ -631,7 +643,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                                  {}.".format(opt, method))
 
     else:
-        raise NotImplementedError("Method not recognized: %s" %method)
+        raise NotImplementedError("Method not recognized: {}".format(method))
 
     gdal.UseExceptions()
 
@@ -693,7 +705,6 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
             for line in reader:
                 lines.append(line)
         options["lum_lines"] = lines
-
 
     # This check will parallelize the process assuming a file that is square or
     # fairly close to it. A file with one dimension that vastly exceeds the
@@ -782,7 +793,8 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         # necessarily the processing.
         with mp.Pool(processes=num_threads,
                      initializer=lock_init,
-                     initargs=(l,)
+                     initargs=(l,),
+                     maxtasksperchild=10
                      ) as pool:
             pool.map(ProcessSuperArray, iterables, chunksize=1)
 
@@ -806,6 +818,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     if verbose:
         print(finish)
     return(finish)
+
 
 def RCProcessing(in_dem_path, out_dem_path, chunk_size, overlap, method, options):
     '''
