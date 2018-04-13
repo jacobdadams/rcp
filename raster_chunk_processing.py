@@ -481,7 +481,7 @@ def ProcessSuperArray(chunk_info):
 
     percent = (progress / total_chunks) * 100
     elapsed = datetime.datetime.now() - starttime
-    print("Tile {0}: {1:d} of {2:d} ({3:0.3f}% started at {4})".format(tile,
+    print("Tile {0}: {1:d} of {2:d} ({3:0.3f}%, started at {4})".format(tile,
                                                         progress, total_chunks,
                                                         percent, elapsed))
 
