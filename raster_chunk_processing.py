@@ -246,29 +246,7 @@ def mdenoise(in_array, t, n, v, tile=None):
     return(mdenoised_array)
 
 
-def hillshade(in_array, az, alt):  #c_size):
-    # # This method has not been updated for multiprocessing; left as a
-    # # placeholder for future sky model method.
-    # temp_rows = in_array.shape[0]
-    # temp_cols = in_array.shape[1]
-    #
-    # temp_dir = tempfile.gettempdir()
-    #
-    # mem_s_fh = gdal.GetDriverByName("MEM").Create('', temp_cols, temp_rows, 1, gdal.GDT_Float32)
-    # mem_s_fh.SetGeoTransform([0, cell_size, 0, 0, 0, cell_size])
-    # s_band = mem_s_fh.GetRasterBand(1)
-    # s_band.SetNoDataValue(s_nodata)
-    # s_band.WriteArray(in_array)
-    # # ==== NOT MULTI-PROCESS SAFE !!! ====
-    # hs_t_file = os.path.join(temp_dir, "hs_temp.tif")
-    #
-    # # Default azimuth value not quite working right.
-    # # For whatever reason, Azimuth must be modified as 180 - az (if <0, +360)
-    # # So for default of 315, pass 225 to DEMProcessing
-    # shade = gdal.DEMProcessing(hs_t_file, mem_s_fh, "hillshade", azimuth=225.0, zFactor=1.0, altitude=45.0, combined=True).ReadAsArray()
-    #
-    # # Currently returning as a float to handle input NoData as float. If we ever actually used this method, we'd probably want to handle this differently, perhaps by scaling the values to 1-255 and changing NoData to 0 (like the cli hillshade command)
-    # return shade.astype(float)
+def hillshade(in_array, az, alt, scale=True):  #c_size):
 
     # Create new array with s_nodata values set to np.nan (for edges of raster)
     nan_array = np.where(in_array == s_nodata, np.nan, in_array)
@@ -291,25 +269,25 @@ def hillshade(in_array, az, alt):  #c_size):
     xx_plus_yy = x*x + y*y
     shaded = (sinalt - (y * cosaz * cosalt - x * sinaz * cosalt)) / np.sqrt(1+xx_plus_yy)
 
-    #shaded = (np.sin(altrad) -
-    #         (y * np.cos(azrad) * np.cos(altrad) - x * np.sin(azrad) * np.cos(altrad))) / np.sqrt(1+(x*x + y*y))
-
     shaded255 = shaded * 255
 
-    # Scale to 1-255
-    # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
-    # Supressing runtime warnings due to NaNs (they just get hidden by NoData
-    # masks in the supper_array rebuild anyways)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)
-        newmax = 255
-        newmin = 1
-        oldmax = np.nanmax(shaded255)
-        oldmin = np.nanmin(shaded255)
+    if scale:
+        # Scale to 1-255
+        # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
+        # Supressing runtime warnings due to NaNs (they just get hidden by
+        # NoData masks in the supper_array rebuild anyways)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            newmax = 255
+            newmin = 1
+            oldmax = np.nanmax(shaded255)
+            oldmin = np.nanmin(shaded255)
 
-    scaled = (newmax - newmin)*(shaded255 - oldmin) / (oldmax - oldmin) + newmin
+        result = (newmax-newmin) * (shaded255-oldmin) / (oldmax-oldmin) + newmin
+    else:
+        result = shaded255
 
-    return scaled
+    return result
 
 
 def skymodel(in_array, lum_lines):
@@ -317,17 +295,22 @@ def skymodel(in_array, lum_lines):
     # initialize skyshade as 0's
     skyshade = np.zeros((in_array.shape))
 
+    # If it's all NoData, just return an array of 0's
+    if in_array.mean() == s_nodata:
+        return skyshade
+
     # Loop through luminance file lines to calculate multiple hillshades
     for line in lum_lines:
         az = float(line[0])
         alt = float(line[1])
         weight = float(line[2])
 
-        shade = hillshade(in_array, az=az, alt=alt) * weight
+        shade = hillshade(in_array, az=az, alt=alt, scale=False) * weight
 
         skyshade = skyshade + shade
         shade = None
 
+    # return skyshade
     # Scale to 1-255
     # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
     # Supressing runtime warnings due to NaNs (they just get hidden by NoData
@@ -1132,13 +1115,13 @@ if "__main__" in __name__:
     #s_dem = "e:\\lidar\\dem\\DEM-ft-80-90-90_hs.tif"
 
     #in_dem = "c:\\temp\\gis\\dem_state.tif"
-    #smooth_dem = "c:\\temp\\gis\\dem_state_gauss30_tnodatatest.tif"
-    #hs_dem = "c:\\temp\\gis\\hstest\\dem_state_gauss30_sky_hs255.tif"
+    smooth_dem = "c:\\temp\\gis\\dem_state_gauss30_tnodatatest.tif"
+    hs_dem = "c:\\temp\\gis\\hstest\\dem_state_gauss30_sky_hsnoscale1500.tif"
     lum = "c:\\temp\\gis\\skyshade\\lum\\1_45_315_150.csv"
 
-    in_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft-lzw.tif"
-    smooth_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30.tif"
-    hs_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30_skymodel.tif"
+    #in_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft-lzw.tif"
+    #smooth_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30.tif"
+    #hs_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30_skymodel.tif"
 
     # md105060 = n=10, t=0.50, v=60
 
@@ -1153,7 +1136,7 @@ if "__main__" in __name__:
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "mdenoise", {"n":n, "t":t, "v":v}, 3, False)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"filter_size":30}, 3, True)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "TPI", {"filter_size":60}, num_threads=4, verbose=True)
-    ParallelRCP(smooth_dem, hs_dem, 2000, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
+    ParallelRCP(smooth_dem, hs_dem, 1500, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
     #ParallelRCP(smooth_dem, hs_dem, 4000, filter_f, "hillshade", {"az":315, "alt":45}, num_threads=3, verbose=True)
     # times = {}
     # for i in range(1, 11, 1):
