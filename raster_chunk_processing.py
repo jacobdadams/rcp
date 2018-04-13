@@ -294,7 +294,22 @@ def hillshade(in_array, az, alt):  #c_size):
     #shaded = (np.sin(altrad) -
     #         (y * np.cos(azrad) * np.cos(altrad) - x * np.sin(azrad) * np.cos(altrad))) / np.sqrt(1+(x*x + y*y))
 
-    return shaded * 255
+    shaded255 = shaded * 255
+
+    # Scale to 1-255
+    # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
+    # Supressing runtime warnings due to NaNs (they just get hidden by NoData
+    # masks in the supper_array rebuild anyways)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        newmax = 255
+        newmin = 1
+        oldmax = np.nanmax(shaded255)
+        oldmin = np.nanmin(shaded255)
+
+    scaled = (newmax - newmin)*(shaded255 - oldmin) / (oldmax - oldmin) + newmin
+
+    return scaled
 
 
 def skymodel(in_array, lum_lines):
@@ -314,13 +329,17 @@ def skymodel(in_array, lum_lines):
         shade = None
 
     # Scale to 1-255
-    # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)-newmin
-    newmax = 255
-    newmin = 1
-    oldmax = np.nanmax(skyshade)
-    oldmin = np.nanmin(skyshade)
+    # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
+    # Supressing runtime warnings due to NaNs (they just get hidden by NoData
+    # masks in the supper_array rebuild anyways)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        newmax = 255
+        newmin = 1
+        oldmax = np.nanmax(skyshade)
+        oldmin = np.nanmin(skyshade)
 
-    scaled = (newmax - newmin) * (skyshade-oldmin) / (oldmax - oldmin) - newmin
+    scaled = (newmax - newmin)*(skyshade - oldmin) / (oldmax - oldmin) + newmin
 
     return scaled
 
@@ -462,9 +481,9 @@ def ProcessSuperArray(chunk_info):
 
     percent = (progress / total_chunks) * 100
     elapsed = datetime.datetime.now() - starttime
-    print("Tile {0}: {1:d} of {2:d} ({3:0.3f}% in {4})".format(tile, progress,
-                                                        total_chunks, percent,
-                                                        elapsed))
+    print("Tile {0}: {1:d} of {2:d} ({3:0.3f}% started at {4})".format(tile,
+                                                        progress, total_chunks,
+                                                        percent, elapsed))
 
     # We perform the read calls within the multiprocessing portion to avoid
     # passing the entire raster to each process. This means we need to acquire
@@ -687,15 +706,19 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         driver = gdal.GetDriverByName('gtiff')
     if os.path.exists(out_dem_path):
         raise IOError("Output file {} already exists.".format(out_dem_path))
-    t_fh = driver.Create(out_dem_path, cols, rows, 1, gdal.GDT_Float32)
+    # Set outfile options
+    # If it's hillshade or skymodel, we want nodata = 0 and gdal byte
+    if method in ['hillshade', 'skymodel']:
+        t_nodata = 0
+        dtype = gdal.GDT_Byte
+    else:
+        t_nodata = s_nodata
+        dtype = gdal.GDT_Float32
+
+    t_fh = driver.Create(out_dem_path, cols, rows, 1, dtype)
     t_fh.SetGeoTransform(transform)
     t_fh.SetProjection(projection)
     t_band = t_fh.GetRasterBand(1)
-    # Set target nodata value
-    if method in ['hillshade', 'skymodel']:
-        t_nodata = 0
-    else:
-        t_nodata = s_nodata
     t_band.SetNoDataValue(t_nodata)
 
     if verbose:
@@ -705,8 +728,10 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
             print("\t{}: {}".format(opt, options[opt]))
         print("Preparing output file {}...".format(out_dem_path))
         print("\tOutput dimensions: {} rows by {} columns.".format(rows, cols))
-        print("\tOutput size: {}".format(sizeof_fmt(rows * cols * 4)))
-        print("\tOutput NoData Value: {}".format(s_nodata))
+        print("\tOutput data type: {}".format(dtype))
+        print("\tOutput size: {}".format(
+            sizeof_fmt(rows * cols * gdal.GetDataTypeSize(dtype) / 8.)))
+        print("\tOutput NoData Value: {}".format(t_nodata))
 
     # Close target file handle (causes entire file to be written to disk)
     t_band = None
@@ -803,6 +828,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         # Create lock to lock s_fh and t_fh reads and writes
         l = mp.Lock()
 
+        print("\nProcessing chunks...")
         # Call pool.map with the lock initializer method, super array
         # processor, and list of chunk objects.
         # chunksize=1 keeps the input processing more-or-less in order
@@ -1105,14 +1131,14 @@ if "__main__" in __name__:
     #smooth_dem = "e:\\lidar\\dem\\DEM-ft-md506050.tif"
     #s_dem = "e:\\lidar\\dem\\DEM-ft-80-90-90_hs.tif"
 
-    in_dem = "c:\\temp\\gis\\dem_state.tif"
-    smooth_dem = "c:\\temp\\gis\\dem_state_gauss30_tnodatatest.tif"
-    hs_dem = "c:\\temp\\gis\\hstest\\dem_state_gauss30_tnodatatest_hs.tif"
+    #in_dem = "c:\\temp\\gis\\dem_state.tif"
+    #smooth_dem = "c:\\temp\\gis\\dem_state_gauss30_tnodatatest.tif"
+    #hs_dem = "c:\\temp\\gis\\hstest\\dem_state_gauss30_sky_hs255.tif"
     lum = "c:\\temp\\gis\\skyshade\\lum\\1_45_315_150.csv"
 
-    #in_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft-lzw.tif"
-    #smooth_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30.tif"
-    #hs_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_md506050_skymodel.tif"
+    in_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft-lzw.tif"
+    smooth_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30.tif"
+    hs_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30_skymodel.tif"
 
     # md105060 = n=10, t=0.50, v=60
 
@@ -1127,8 +1153,8 @@ if "__main__" in __name__:
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "mdenoise", {"n":n, "t":t, "v":v}, 3, False)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"filter_size":30}, 3, True)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "TPI", {"filter_size":60}, num_threads=4, verbose=True)
-    #ParallelRCP(smooth_dem, hs_dem, 4000, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
-    ParallelRCP(smooth_dem, hs_dem, 4000, filter_f, "hillshade", {"az":315, "alt":45}, num_threads=3, verbose=True)
+    ParallelRCP(smooth_dem, hs_dem, 2000, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
+    #ParallelRCP(smooth_dem, hs_dem, 4000, filter_f, "hillshade", {"az":315, "alt":45}, num_threads=3, verbose=True)
     # times = {}
     # for i in range(1, 11, 1):
     #     smooth_dem = "c:\\temp\\gis\\dem_state_ParallelRCPTest_{}.tif".format(i)
