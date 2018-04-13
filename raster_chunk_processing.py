@@ -246,7 +246,7 @@ def mdenoise(in_array, t, n, v, tile=None):
     return(mdenoised_array)
 
 
-def hillshade(in_array, az, alt, scale=True):  #c_size):
+def hillshade(in_array, az, alt, scale=True):
 
     # Create new array with s_nodata values set to np.nan (for edges of raster)
     nan_array = np.where(in_array == s_nodata, np.nan, in_array)
@@ -464,7 +464,12 @@ def ProcessSuperArray(chunk_info):
 
     percent = (progress / total_chunks) * 100
     elapsed = datetime.datetime.now() - starttime
-    print("Tile {0}: {1:d} of {2:d} ({3:0.3f}%, started at {4})".format(tile,
+    if verbose:
+        print("Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4} Indices: [{5}:{6}, {7}:{8}] PID: {9}".format(tile,
+                                                                progress, total_chunks,
+                                                                percent, elapsed, read_y_off,read_y_off + read_y_size, read_x_off, read_x_off + read_y_size, mp.current_process().pid))
+    else:
+        print("Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4}".format(tile,
                                                         progress, total_chunks,
                                                         percent, elapsed))
 
@@ -497,11 +502,12 @@ def ProcessSuperArray(chunk_info):
     # read_array are replaced with data from read_array. This changes every
     # value, except for edge cases that leave portions of the super_array
     # as NoData.
-    if verbose:
-        print("Tile {} indices: [{}:{}, {}:{}]".format(tile, read_y_off,
-                                                     read_y_off + read_y_size,
-                                                     read_x_off,
-                                                     read_x_off + read_y_size))
+    # if verbose:
+    #     print("Tile {} indices: [{}:{}, {}:{}]".format(tile, read_y_off,
+    #                                                  read_y_off + read_y_size,
+    #                                                  read_x_off,
+    #                                                  read_x_off + read_y_size))
+        #print("Tile {} PID: {}".format(tile, mp.current_process().pid))
     super_array[sa_y_start:sa_y_end, sa_x_start:sa_x_end] = read_array
 
     # Do something with the data
@@ -1115,13 +1121,13 @@ if "__main__" in __name__:
     #s_dem = "e:\\lidar\\dem\\DEM-ft-80-90-90_hs.tif"
 
     #in_dem = "c:\\temp\\gis\\dem_state.tif"
-    smooth_dem = "c:\\temp\\gis\\dem_state_gauss30_tnodatatest.tif"
-    hs_dem = "c:\\temp\\gis\\hstest\\dem_state_gauss30_sky_hsnoscale1500.tif"
+    #smooth_dem = "c:\\temp\\gis\\dem_state_gauss30_tnodatatest.tif"
+    #hs_dem = "c:\\temp\\gis\\hstest\\dem_state_gauss30_sky_hsnoscale1500.tif"
     lum = "c:\\temp\\gis\\skyshade\\lum\\1_45_315_150.csv"
 
     #in_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft-lzw.tif"
-    #smooth_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30.tif"
-    #hs_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30_skymodel.tif"
+    smooth_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30.tif"
+    hs_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30_skymodel.tif"
 
     # md105060 = n=10, t=0.50, v=60
 
@@ -1136,7 +1142,7 @@ if "__main__" in __name__:
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "mdenoise", {"n":n, "t":t, "v":v}, 3, False)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"filter_size":30}, 3, True)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "TPI", {"filter_size":60}, num_threads=4, verbose=True)
-    ParallelRCP(smooth_dem, hs_dem, 1500, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
+    ParallelRCP(smooth_dem, hs_dem, 5000, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
     #ParallelRCP(smooth_dem, hs_dem, 4000, filter_f, "hillshade", {"az":315, "alt":45}, num_threads=3, verbose=True)
     # times = {}
     # for i in range(1, 11, 1):
@@ -1164,3 +1170,5 @@ if "__main__" in __name__:
     # 1000: 15 chunks, total time:  3:20
     # 500:  50 chunks, total time:  3:38
     # Total time increases as number of chunks increases, due to overhead of writing/reading temp files
+    # Ditto for skymodel: as chunk size increases (number of chunks decreases), time decreases rapidly to a point around 1500-2000 chunk size, then greatly diminishing returns.
+    # Memory usage increases from ~200mb/process @ 500 to ~1.2gb/proc @ 1500 to ~2.2gb/proc @ 5000 (check these numbers; memory usage should scale linearly with array size (thus the square of the chunk size))
