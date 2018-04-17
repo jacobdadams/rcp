@@ -246,7 +246,7 @@ def mdenoise(in_array, t, n, v, tile=None):
     return(mdenoised_array)
 
 
-def hillshade(in_array, az, alt, scale=True):
+def hillshade(in_array, az, alt, scale=False):
 
     # Create new array with s_nodata values set to np.nan (for edges of raster)
     nan_array = np.where(in_array == s_nodata, np.nan, in_array)
@@ -310,21 +310,24 @@ def skymodel(in_array, lum_lines):
         skyshade = skyshade + shade
         shade = None
 
-    # return skyshade
+    return skyshade
+
+    # --- SCALING DOESN'T WORK- The min/max for each chunk are differentself.
+    # --- We'd need to scale after the entire thing is finished.
     # Scale to 1-255
     # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
     # Supressing runtime warnings due to NaNs (they just get hidden by NoData
     # masks in the supper_array rebuild anyways)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)
-        newmax = 255
-        newmin = 1
-        oldmax = np.nanmax(skyshade)
-        oldmin = np.nanmin(skyshade)
-
-    scaled = (newmax - newmin)*(skyshade - oldmin) / (oldmax - oldmin) + newmin
-
-    return scaled
+    # with warnings.catch_warnings():
+    #     warnings.simplefilter("ignore", category=RuntimeWarning)
+    #     newmax = 255
+    #     newmin = 1
+    #     oldmax = np.nanmax(skyshade)
+    #     oldmin = np.nanmin(skyshade)
+    #
+    # scaled = (newmax - newmin)*(skyshade - oldmin) / (oldmax - oldmin) + newmin
+    #
+    # return scaled
 
 
 def TPI(in_array, filter_size):
@@ -697,12 +700,17 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         raise IOError("Output file {} already exists.".format(out_dem_path))
     # Set outfile options
     # If it's hillshade or skymodel, we want nodata = 0 and gdal byte
-    if method in ['hillshade', 'skymodel']:
-        t_nodata = 0
-        dtype = gdal.GDT_Byte
-    else:
-        t_nodata = s_nodata
-        dtype = gdal.GDT_Float32
+    # THIS WAS FOR SCALING, BUT SCALING DOESN'T WORK (SEE NOTE IN SKYMODEL)
+    # if method in ['hillshade', 'skymodel']:
+    #     t_nodata = 0
+    #     dtype = gdal.GDT_Byte
+    # else:
+    #     t_nodata = s_nodata
+    #     dtype = gdal.GDT_Float32
+
+    # non-scaled settings
+    t_nodata = s_nodata
+    dtype = gdal.GDT_Float32
 
     t_fh = driver.Create(out_dem_path, cols, rows, 1, dtype)
     t_fh.SetGeoTransform(transform)
@@ -1120,14 +1128,14 @@ if "__main__" in __name__:
     #smooth_dem = "e:\\lidar\\dem\\DEM-ft-md506050.tif"
     #s_dem = "e:\\lidar\\dem\\DEM-ft-80-90-90_hs.tif"
 
-    #in_dem = "c:\\temp\\gis\\dem_state.tif"
-    #smooth_dem = "c:\\temp\\gis\\dem_state_gauss30_tnodatatest.tif"
-    #hs_dem = "c:\\temp\\gis\\hstest\\dem_state_gauss30_sky_hsnoscale1500.tif"
+    in_dem = "c:\\temp\\gis\\elevation\\northdem1_ft.tif"
+    smooth_dem = "c:\\temp\\gis\\elevation\\northdem1_ft_gauss30.tif"
+    hs_dem = "c:\\temp\\gis\\elevation\\northdem1_ft_gauss30_skymodel2.tif"
     lum = "c:\\temp\\gis\\skyshade\\lum\\1_45_315_150.csv"
 
     #in_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft-lzw.tif"
-    smooth_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30.tif"
-    hs_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30_skymodel.tif"
+    #smooth_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30.tif"
+    #hs_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30_skymodel.tif"
 
     # md105060 = n=10, t=0.50, v=60
 
@@ -1142,7 +1150,7 @@ if "__main__" in __name__:
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "mdenoise", {"n":n, "t":t, "v":v}, 3, False)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"filter_size":30}, 3, True)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "TPI", {"filter_size":60}, num_threads=4, verbose=True)
-    ParallelRCP(smooth_dem, hs_dem, 5000, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
+    ParallelRCP(smooth_dem, hs_dem, 1500, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
     #ParallelRCP(smooth_dem, hs_dem, 4000, filter_f, "hillshade", {"az":315, "alt":45}, num_threads=3, verbose=True)
     # times = {}
     # for i in range(1, 11, 1):
