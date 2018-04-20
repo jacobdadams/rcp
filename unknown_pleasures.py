@@ -210,19 +210,23 @@ pixel_height = -transform[5]
 #height = 4000
 
 #Angels Landing 
-origin = (326001, 4127476)
+origin = (328983, 4126898)
 rotate = 200
-width = 6000
-height = 9000
+width = 3000
+height = 8500
 
 # smaller offsett = larger vertical scaling, "lower" viewpoint
-print_offset = 10
-grey_max = 1
+print_offset = 5
+grey_max = .95
+
+# Height of resulting image, in inches (based on system's dpi).
+# Used to autoscale image, but you'll want to use artistic license and play around with it afterwards to get it looking good. May through an error about max window size.
+print_height = 8
 
 # horizontal gap
-x_gap = 60
+x_gap = 15
 # vertical gap- you want about 80-100 rows
-y_gap = 90
+y_gap = 40
 
 num_rows = int(height / y_gap)
 num_cols = int(width / x_gap)
@@ -302,17 +306,14 @@ x_max_index = int((x_max - source_x_origin) / pixel_width)
 y_min_index = int((source_y_origin - y_min) / pixel_width)
 y_max_index = int((source_y_origin - y_max) / pixel_width)
 read_cols = x_max_index - x_min_index
-# read_rows is reversed, just like source_y_origin-y_min is reversed, because raster origin is top left but ReadAsArray indexes from bottom left.
+# read_rows is reversed, just like source_y_origin-y_min is reversed, because raster (and ReadAsArray) origin is top left but UTM (and many other proj coord sys) have Y increasing as we go north.
 read_rows = y_min_index - y_max_index
-print("xmin: {}\txmax: {}".format(x_min, x_max))
-print("ymin: {}\tymax: {}".format(y_min, y_max))
-print("{} {} {} {}".format(x_min_index, y_max_index, read_cols, read_rows))
-
-# TODO
-# This rotation is still off, and it's too late for my brain to think.
+# print("xmin: {}\txmax: {}".format(x_min, x_max))
+# print("ymin: {}\tymax: {}".format(y_min, y_max))
+# print("{} {} {} {}".format(x_min_index, y_max_index, read_cols, read_rows))
 
 data = s_band.ReadAsArray(x_min_index, y_max_index, read_cols, read_rows)
-    # have to use x_min_i, y_max_i because of different origins as above
+    # have to use x_min_i, y_max_i because of different raster/PCS origins as above
 masked_data = np.ma.masked_equal(data, nodata)
 del data
 
@@ -371,10 +372,28 @@ for i, row in enumerate(row_elevs_list):
 
 del masked_data        
     
-# Print it out
-y_start = row_elevs_list[0][0]
-x_vals = range(0, len(new_row_elevs_list[0])) # first collection of x-values used as x-axis, should probably get values from data- ???
-for i, stripe in enumerate(new_row_elevs_list[::-1]):
+# ===== Print it out =====
+
+# have to set figure dimensions before adding anything to the plot-https://stackoverflow.com/questions/332289/how-do-you-change-the-size-of-figures-drawn-with-matplotlib
+# Try to set the ymin to be print_offset below the lowest elevation
+min_elev = min(new_row_elevs_list[0])  # this works becuase the front slice hides everything behind it
+
+# from https://dbader.org/blog/python-min-max-and-nested-lists, https://stackoverflow.com/questions/33269530/get-max-value-from-a-list-with-lists
+min_overall_elv = min(map(lambda x: min(x), row_elevs_list)) #  this gets the minimum elevation value found, which could lead to undesired results if the foreground is not the lowest elevation (looking down canyon instead of up, for example). So we'll just go with the first method
+max_overall_elev = max(map(lambda x: max(x), new_row_elevs_list))  # could use this to get max elev and then set ymax to max elev + (num_rows * print_offset), but what if max elev is in the front? leaving for now (using matplotlib offset rather than adding offset to data might solve this.
+
+
+p_height = print_height
+p_width = p_height * (width / (max_overall_elev - min_elev))
+print("{} {}".format(max_overall_elev, min_elev))
+plt.figure(num=1, figsize=(p_width, p_height)) # (width, height)
+
+# Actually plot the elevations
+#y_start = row_elevs_list[0][0]
+#x_vals = range(0, len(new_row_elevs_list[0])) # indices of first collection of x-values used as x-axis, should probably get values from data- ???
+    # xvals are between 0 and num_cols- We've discarded any coord-sys widths
+x_vals = range(0, width, x_gap)  # x valuse follow the width in coord sys units
+for i, stripe in enumerate(new_row_elevs_list[::-1]):  # reverse the list to add slices back to front, with each slice hiding parts of the slice behind it.
     # Trying to set the color as a gradient fading to grey in the back
     # color = '0.75' = 75% grey
     # Take our scaling factor and raise it to a power, so that it stays darker for longer and then goes quickly to white- somewhere between 2 to 4 or 5
@@ -382,14 +401,12 @@ for i, stripe in enumerate(new_row_elevs_list[::-1]):
     color = str(grey)
     # Working from the back, add the polygon and the line for each slice
     plt.fill_between(x_vals, stripe, facecolor = 'white', edgecolor = color)
-    #plt.plot(stripe, color='white')
-# Try to set the ymin to be print_offset below the lowest elevation
-min_elev = min(new_row_elevs_list[0])  # this works becuase the front slice hides everything behind it... but we can get cooler than that
+    #plt.plot(stripe, color=color)
 
-# from https://dbader.org/blog/python-min-max-and-nested-lists, https://stackoverflow.com/questions/33269530/get-max-value-from-a-list-with-lists
-# min_elev = min(map(lambda x: min(x), row_elevs_list)) #  this gets the minimum elevation value found, which could lead to undesired results if the foreground is not the lowest elevation (looking down canyon instead of up, for example). So we'll just go with the first method
 plt.ylim(ymin = min_elev - print_offset)
+plt.xlim(xmin = 0, xmax = width)
 plt.axis('off')
+plt.tight_layout()
 end = datetime.datetime.now()
 plt.show()
 
