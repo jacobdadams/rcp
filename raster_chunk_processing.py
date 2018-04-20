@@ -46,9 +46,11 @@ from skimage import exposure
 from osgeo import gdal
 from scipy.ndimage.filters import generic_filter as gf
 
+
 # Just a simple class to hold the information about each chunk
 class Chunk:
     pass
+
 
 def sizeof_fmt(num, suffix='B'):
     '''
@@ -60,6 +62,7 @@ def sizeof_fmt(num, suffix='B'):
             return "%3.1f %s%s" % (num, unit, suffix)
         num /= 1024.0
     return "%.1f %s%s" % (num, 'Yi', suffix)
+
 
 def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
     '''
@@ -99,6 +102,7 @@ def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
             f.write(row)
             f.write("\n")
 
+
 def blur_mean(in_array, filter_size):
     '''
     Performs a simple blur based on the average of nearby values. Uses circular
@@ -121,6 +125,7 @@ def blur_mean(in_array, filter_size):
     circular_mean = gf(in_array, np.mean, footprint=kernel)
 
     return circular_mean
+
 
 def blur_gauss(in_array, size):
     '''
@@ -162,6 +167,7 @@ def blur_gauss(in_array, size):
         smoothed = convolve_fft(nan_array, g, nan_treatment='interpolate')
 
     return smoothed
+
 
 def mdenoise(in_array, t, n, v, tile=None):
     '''
@@ -239,29 +245,8 @@ def mdenoise(in_array, t, n, v, tile=None):
 
     return(mdenoised_array)
 
-def hillshade(in_array, az, alt): #c_size):
-    # # This method has not been updated for multiprocessing; left as a
-    # # placeholder for future sky model method.
-    # temp_rows = in_array.shape[0]
-    # temp_cols = in_array.shape[1]
-    #
-    # temp_dir = tempfile.gettempdir()
-    #
-    # mem_s_fh = gdal.GetDriverByName("MEM").Create('', temp_cols, temp_rows, 1, gdal.GDT_Float32)
-    # mem_s_fh.SetGeoTransform([0, cell_size, 0, 0, 0, cell_size])
-    # s_band = mem_s_fh.GetRasterBand(1)
-    # s_band.SetNoDataValue(s_nodata)
-    # s_band.WriteArray(in_array)
-    # # ==== NOT MULTI-PROCESS SAFE !!! ====
-    # hs_t_file = os.path.join(temp_dir, "hs_temp.tif")
-    #
-    # # Default azimuth value not quite working right.
-    # # For whatever reason, Azimuth must be modified as 180 - az (if <0, +360)
-    # # So for default of 315, pass 225 to DEMProcessing
-    # shade = gdal.DEMProcessing(hs_t_file, mem_s_fh, "hillshade", azimuth=225.0, zFactor=1.0, altitude=45.0, combined=True).ReadAsArray()
-    #
-    # # Currently returning as a float to handle input NoData as float. If we ever actually used this method, we'd probably want to handle this differently, perhaps by scaling the values to 1-255 and changing NoData to 0 (like the cli hillshade command)
-    # return shade.astype(float)
+
+def hillshade(in_array, az, alt, scale=True):
 
     # Create new array with s_nodata values set to np.nan (for edges of raster)
     nan_array = np.where(in_array == s_nodata, np.nan, in_array)
@@ -284,15 +269,35 @@ def hillshade(in_array, az, alt): #c_size):
     xx_plus_yy = x*x + y*y
     shaded = (sinalt - (y * cosaz * cosalt - x * sinaz * cosalt)) / np.sqrt(1+xx_plus_yy)
 
-    #shaded = (np.sin(altrad) -
-    #         (y * np.cos(azrad) * np.cos(altrad) - x * np.sin(azrad) * np.cos(altrad))) / np.sqrt(1+(x*x + y*y))
+    shaded255 = shaded * 255
 
-    return shaded * 255
+    if scale:
+        # Scale to 1-255
+        # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
+        # Supressing runtime warnings due to NaNs (they just get hidden by
+        # NoData masks in the supper_array rebuild anyways)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            newmax = 255
+            newmin = 1
+            oldmax = np.nanmax(shaded255)
+            oldmin = np.nanmin(shaded255)
+
+        result = (newmax-newmin) * (shaded255-oldmin) / (oldmax-oldmin) + newmin
+    else:
+        result = shaded255
+
+    return result
+
 
 def skymodel(in_array, lum_lines):
 
     # initialize skyshade as 0's
     skyshade = np.zeros((in_array.shape))
+
+    # If it's all NoData, just return an array of 0's
+    if in_array.mean() == s_nodata:
+        return skyshade
 
     # Loop through luminance file lines to calculate multiple hillshades
     for line in lum_lines:
@@ -300,11 +305,27 @@ def skymodel(in_array, lum_lines):
         alt = float(line[1])
         weight = float(line[2])
 
-        shade = hillshade(in_array, az=az, alt=alt) * weight
+        shade = hillshade(in_array, az=az, alt=alt, scale=False) * weight
 
         skyshade = skyshade + shade
         shade = None
-    return skyshade
+
+    # return skyshade
+    # Scale to 1-255
+    # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
+    # Supressing runtime warnings due to NaNs (they just get hidden by NoData
+    # masks in the supper_array rebuild anyways)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        newmax = 255
+        newmin = 1
+        oldmax = np.nanmax(skyshade)
+        oldmin = np.nanmin(skyshade)
+
+    scaled = (newmax - newmin)*(skyshade - oldmin) / (oldmax - oldmin) + newmin
+
+    return scaled
+
 
 def TPI(in_array, filter_size):
     '''
@@ -340,6 +361,7 @@ def TPI(in_array, filter_size):
         circular_mean = gf(nan_array, np.nanmean, footprint=kernel)
 
     return nan_array - circular_mean
+
 
 def ProcessSuperArray(chunk_info):
     '''
@@ -387,6 +409,7 @@ def ProcessSuperArray(chunk_info):
     global cell_size
     global verbose
     s_nodata = chunk_info.s_nodata
+    t_nodata = chunk_info.t_nodata
     cell_size = chunk_info.cell_size
     verbose = chunk_info.verbose
 
@@ -441,9 +464,14 @@ def ProcessSuperArray(chunk_info):
 
     percent = (progress / total_chunks) * 100
     elapsed = datetime.datetime.now() - starttime
-    print("Tile {0}: {1:d} of {2:d} ({3:0.3f}% in {4})".format(tile, progress,
-                                                        total_chunks, percent,
-                                                        elapsed))
+    if verbose:
+        print("Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4} Indices: [{5}:{6}, {7}:{8}] PID: {9}".format(tile,
+                                                                progress, total_chunks,
+                                                                percent, elapsed, read_y_off,read_y_off + read_y_size, read_x_off, read_x_off + read_y_size, mp.current_process().pid))
+    else:
+        print("Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4}".format(tile,
+                                                        progress, total_chunks,
+                                                        percent, elapsed))
 
     # We perform the read calls within the multiprocessing portion to avoid
     # passing the entire raster to each process. This means we need to acquire
@@ -474,11 +502,12 @@ def ProcessSuperArray(chunk_info):
     # read_array are replaced with data from read_array. This changes every
     # value, except for edge cases that leave portions of the super_array
     # as NoData.
-    if verbose:
-        print("Tile {} indices: [{}:{}, {}:{}]".format(tile, read_y_off,
-                                                     read_y_off + read_y_size,
-                                                     read_x_off,
-                                                     read_x_off + read_y_size))
+    # if verbose:
+    #     print("Tile {} indices: [{}:{}, {}:{}]".format(tile, read_y_off,
+    #                                                  read_y_off + read_y_size,
+    #                                                  read_x_off,
+    #                                                  read_x_off + read_y_size))
+        #print("Tile {} PID: {}".format(tile, mp.current_process().pid))
     super_array[sa_y_start:sa_y_end, sa_x_start:sa_x_end] = read_array
 
     # Do something with the data
@@ -512,8 +541,8 @@ def ProcessSuperArray(chunk_info):
 
     # Reset NoData values in our result to match the NoData areas in the source
     # array (areas in temp_array where corresponding cells in
-    # read_sub_array==NoData get set to s_nodata)
-    np.putmask(temp_array, read_sub_array==s_nodata, s_nodata)
+    # read_sub_array==NoData get set to t_nodata)
+    np.putmask(temp_array, read_sub_array == s_nodata, t_nodata)
 
     with lock:
         # ===== LOCK HERE =====
@@ -537,6 +566,7 @@ def ProcessSuperArray(chunk_info):
     read_sub_array = None
     temp_array = None
 
+
 def lock_init(l):
     '''
     Mini helper method that allows us to use a global lock accross a pool of
@@ -546,6 +576,7 @@ def lock_init(l):
     '''
     global lock
     lock = l
+
 
 def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                 options, num_threads=1, verbose=False):
@@ -580,7 +611,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                                  {}.".format(opt, method))
         # Check overlap against filter_size
         if overlap < 2 * options["filter_size"]:
-            overlap = 2* options["filter_size"]
+            overlap = 2 * options["filter_size"]
 
     elif method == "mdenoise":
         mdenoise_opts = ["t", "n", "v"]
@@ -596,7 +627,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
         if overlap < 2 * options["filter_size"]:
-            overlap = 2* options["filter_size"]
+            overlap = 2 * options["filter_size"]
 
     elif method == "TPI":
         TPI_opts = ["filter_size"]
@@ -605,7 +636,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
         if overlap < 2 * options["filter_size"]:
-            overlap = 2* options["filter_size"]
+            overlap = 2 * options["filter_size"]
 
     elif method == "blur_mean":
         mean_opts = ["filter_size"]
@@ -614,7 +645,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
         if overlap < 2 * options["filter_size"]:
-            overlap = 2* options["filter_size"]
+            overlap = 2 * options["filter_size"]
 
     elif method == "hillshade":
         hillshade_opts = ["alt", "az"]
@@ -631,7 +662,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                                  {}.".format(opt, method))
 
     else:
-        raise NotImplementedError("Method not recognized: %s" %method)
+        raise NotImplementedError("Method not recognized: {}".format(method))
 
     gdal.UseExceptions()
 
@@ -650,13 +681,34 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     s_nodata = s_band.GetNoDataValue()
 
     if s_nodata is None:
-        raise Exception("No NoData value set in input DEM.")
+        raise ValueError("No NoData value set in input DEM.")
     if verbose:
         print("\tSource NoData Value: {0:f}\n".format(s_nodata))
 
     # Close source file handle
     s_band = None
     s_fh = None
+
+    # Set up target file in preparation for future writes
+    # If we've been given a vrt as a source, force the output to be geotiff
+    if driver.LongName == 'Virtual Raster':
+        driver = gdal.GetDriverByName('gtiff')
+    if os.path.exists(out_dem_path):
+        raise IOError("Output file {} already exists.".format(out_dem_path))
+    # Set outfile options
+    # If it's hillshade or skymodel, we want nodata = 0 and gdal byte
+    if method in ['hillshade', 'skymodel']:
+        t_nodata = 0
+        dtype = gdal.GDT_Byte
+    else:
+        t_nodata = s_nodata
+        dtype = gdal.GDT_Float32
+
+    t_fh = driver.Create(out_dem_path, cols, rows, 1, dtype)
+    t_fh.SetGeoTransform(transform)
+    t_fh.SetProjection(projection)
+    t_band = t_fh.GetRasterBand(1)
+    t_band.SetNoDataValue(t_nodata)
 
     if verbose:
         print("Method: {}".format(method))
@@ -665,25 +717,17 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
             print("\t{}: {}".format(opt, options[opt]))
         print("Preparing output file {}...".format(out_dem_path))
         print("\tOutput dimensions: {} rows by {} columns.".format(rows, cols))
-        print("\tOutput size: {}".format(sizeof_fmt(rows * cols * 4)))
-        print("\tOutput NoData Value: {}".format(s_nodata))
-
-    # Set up target file in preparation for future writes
-    # If we've been given a vrt as a source, force the output to be geotiff
-    if driver.LongName == 'Virtual Raster':
-        driver = gdal.GetDriverByName('gtiff')
-    if os.path.exists(out_dem_path):
-        raise IOError("Output file {} already exists.".format(out_dem_path))
-    t_fh = driver.Create(out_dem_path, cols, rows, 1, gdal.GDT_Float32)
-    t_fh.SetGeoTransform(transform)
-    t_fh.SetProjection(projection)
-    t_band = t_fh.GetRasterBand(1)
-    t_band.SetNoDataValue(s_nodata)
+        print("\tOutput data type: {}".format(dtype))
+        print("\tOutput size: {}".format(
+            sizeof_fmt(rows * cols * gdal.GetDataTypeSize(dtype) / 8.)))
+        print("\tOutput NoData Value: {}".format(t_nodata))
 
     # Close target file handle (causes entire file to be written to disk)
     t_band = None
     t_fh = None
 
+    # If we're doing a skymodel, we need to read in the whole luminance file
+    # and add that list to the options dictionary
     if method == "skymodel":
         if verbose:
             print("Reading in luminance file {}".format(options["lum_file"]))
@@ -693,7 +737,6 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
             for line in reader:
                 lines.append(line)
         options["lum_lines"] = lines
-
 
     # This check will parallelize the process assuming a file that is square or
     # fairly close to it. A file with one dimension that vastly exceeds the
@@ -755,6 +798,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
 
                 # These are constant over the whole raster
                 chunk.s_nodata = s_nodata
+                chunk.t_nodata = t_nodata
                 chunk.cell_size = cell_size
                 chunk.mdenoise_path = mdenoise_path
                 chunk.in_dem_path = in_dem_path
@@ -773,6 +817,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         # Create lock to lock s_fh and t_fh reads and writes
         l = mp.Lock()
 
+        print("\nProcessing chunks...")
         # Call pool.map with the lock initializer method, super array
         # processor, and list of chunk objects.
         # chunksize=1 keeps the input processing more-or-less in order
@@ -780,9 +825,12 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         # starts at 0, 25, 50, and 75).
         # pool.map() guarantees the results will be in order, but not
         # necessarily the processing.
+        # maxtasksperchild sets a limit on the number of tasks assigned to each
+        # process, hopefully limiting memory leaks within each subprocess
         with mp.Pool(processes=num_threads,
                      initializer=lock_init,
-                     initargs=(l,)
+                     initargs=(l,),
+                     maxtasksperchild=10
                      ) as pool:
             pool.map(ProcessSuperArray, iterables, chunksize=1)
 
@@ -806,6 +854,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     if verbose:
         print(finish)
     return(finish)
+
 
 def RCProcessing(in_dem_path, out_dem_path, chunk_size, overlap, method, options):
     '''
@@ -1072,13 +1121,15 @@ if "__main__" in __name__:
     #s_dem = "e:\\lidar\\dem\\DEM-ft-80-90-90_hs.tif"
 
     #in_dem = "c:\\temp\\gis\\dem_state.tif"
+
     #smooth_dem = "c:\\temp\\gis\\dem_state_gauss30.tif"
     #hs_dem = "c:\\temp\\gis\\hstest\\dem_state_gauss30_sky.tif"
-    lum = "c:\\temp\\gis\\skyshade\\lum\\1_45_315_150.csv"
+    lum = "c:\\gis\\temp\\1_35_245_250.csv"
 
     #in_dem = "e:\\lidar\\canyons\\dem\\merged_raw_dem.vrt"
-    smooth_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_md506050-lzw.tif"
-    hs_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_md506050_skymodel.tif"
+    smooth_dem = "c:\\gis\\data\\elevation\\CacheFranklinNED10m\\cf_utm.tif"
+    hs_dem = "c:\\gis\\data\\elevation\\CacheFranklinNED10m\\cf_sky.tif"
+
 
     # md105060 = n=10, t=0.50, v=60
 
@@ -1093,7 +1144,11 @@ if "__main__" in __name__:
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "mdenoise", {"n":n, "t":t, "v":v}, 3, False)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"filter_size":30}, 3, True)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "TPI", {"filter_size":60}, num_threads=4, verbose=True)
-    ParallelRCP(smooth_dem, hs_dem, 4000, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
+
+
+    ParallelRCP(smooth_dem, hs_dem, 5000, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
+    #ParallelRCP(smooth_dem, hs_dem, 4000, filter_f, "hillshade", {"az":315, "alt":45}, num_threads=3, verbose=True)
+
     # times = {}
     # for i in range(1, 11, 1):
     #     smooth_dem = "c:\\temp\\gis\\dem_state_ParallelRCPTest_{}.tif".format(i)
@@ -1120,3 +1175,5 @@ if "__main__" in __name__:
     # 1000: 15 chunks, total time:  3:20
     # 500:  50 chunks, total time:  3:38
     # Total time increases as number of chunks increases, due to overhead of writing/reading temp files
+    # Ditto for skymodel: as chunk size increases (number of chunks decreases), time decreases rapidly to a point around 1500-2000 chunk size, then greatly diminishing returns.
+    # Memory usage increases from ~200mb/process @ 500 to ~1.2gb/proc @ 1500 to ~2.2gb/proc @ 5000 (check these numbers; memory usage should scale linearly with array size (thus the square of the chunk size))
