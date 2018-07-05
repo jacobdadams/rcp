@@ -572,7 +572,10 @@ def ProcessSuperArray(chunk_info):
 
         # Resulting array is a superset of the data; we need to strip off the
         # overlap before writing it
-        temp_array = new_data[f2:-1 * f2, f2:-1 * f2]
+        if f2 > 0:
+            temp_array = new_data[f2:-f2, f2:-f2]
+        else:
+            temp_array = new_data
         print(temp_array.max())
         # If nodata in source, make sure nodata areas are transferred back
         if s_nodata is not None:
@@ -584,7 +587,10 @@ def ProcessSuperArray(chunk_info):
             # slice down super_array to get original chunk of data (ie,
             # super_array minus additional data on edges) to use for finding
             # NoData areas
-            read_sub_array = super_array[f2:-f2, f2:-f2]
+            if f2 > 0:
+                read_sub_array = super_array[f2:-f2, f2:-f2]
+            else:
+                read_sub_array = super_array
 
             # Reset NoData values in our result to match the NoData areas in
             # the source array (areas in temp_array where corresponding cells
