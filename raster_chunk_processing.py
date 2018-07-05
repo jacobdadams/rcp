@@ -259,7 +259,7 @@ def hillshade(in_array, az, alt, scale=False):
                     stretching for each chunk.
     '''
 
-    # Create new array with s_nodata values set to np.nan (for edges of raster)
+    # Create new array wsith s_nodata values set to np.nan (for edges of raster)
     nan_array = np.where(in_array == s_nodata, np.nan, in_array)
 
     x = np.zeros(nan_array.shape)
@@ -483,7 +483,7 @@ def ProcessSuperArray(chunk_info):
         read_x_off = 0
         read_x_size = x_size - f2
         sa_x_start = f2
-    elif x_off + x_size > cols:
+    if x_off + x_size > cols:
         read_x_size = x_size - f2
         sa_x_end = -1 * f2
 
@@ -491,7 +491,7 @@ def ProcessSuperArray(chunk_info):
         read_y_off = 0
         read_y_size = y_size - f2
         sa_y_start = f2
-    elif y_off + y_size > rows:
+    if y_off + y_size > rows:
         read_y_size = y_size - f2
         sa_y_end = -1 * f2
 
@@ -503,7 +503,7 @@ def ProcessSuperArray(chunk_info):
                                                      elapsed, read_y_off,
                                                      read_y_off + read_y_size,
                                                      read_x_off,
-                                                     read_x_off + read_y_size,
+                                                     read_x_off + read_x_size,
                                                      mp.current_process().pid))
     else:
         print("Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4}".format(tile, progress, total_chunks, percent, elapsed))
@@ -544,7 +544,7 @@ def ProcessSuperArray(chunk_info):
         # value, except for edge cases that leave portions of the super_array
         # as NoData.
         super_array[sa_y_start:sa_y_end, sa_x_start:sa_x_end] = read_array
-
+        print(super_array.max())
         # Do something with the data
         if method == "blur_gauss":
             new_data = blur_gauss(super_array, options["filter_size"])
@@ -573,7 +573,7 @@ def ProcessSuperArray(chunk_info):
         # Resulting array is a superset of the data; we need to strip off the
         # overlap before writing it
         temp_array = new_data[f2:-1 * f2, f2:-1 * f2]
-
+        print(temp_array.max())
         # If nodata in source, make sure nodata areas are transferred back
         if s_nodata is not None:
             # if verbose:
@@ -815,134 +815,134 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     #
     # Also, we could probably code up an automatic chunk_size setter based on
     # data type and system memory limits
-    #if rows > chunk_size and cols > chunk_size:
-    # calculate breaks every chunk_size pixels
-    row_splits = list(range(0, rows, chunk_size))
-    col_splits = list(range(0, cols, chunk_size))
+    if rows > chunk_size and cols > chunk_size:
+        # calculate breaks every chunk_size pixels
+        row_splits = list(range(0, rows, chunk_size))
+        col_splits = list(range(0, cols, chunk_size))
 
-    # add total number of rows/cols to be last break (used for x/y_end)
-    row_splits.append(rows)
-    col_splits.append(cols)
+        # add total number of rows/cols to be last break (used for x/y_end)
+        row_splits.append(rows)
+        col_splits.append(cols)
 
-    # Double the overlap just to be safe. This distance becomes one side of
-    # the super_array beyond the wanted data (f2 <> x values <> f2)
-    f2 = 2 * overlap
+        # Double the overlap just to be safe. This distance becomes one side of
+        # the super_array beyond the wanted data (f2 <> x values <> f2)
+        f2 = 2 * overlap
 
-    # List of chunks to be iterated over with pool.map()
-    iterables = []
+        # List of chunks to be iterated over with pool.map()
+        iterables = []
 
-    total_chunks = (len(row_splits) - 1) * (len(col_splits) - 1)
-    progress = 0
+        total_chunks = (len(row_splits) - 1) * (len(col_splits) - 1)
+        progress = 0
 
-    # === Multiprocessing notes ===
-    # Procedure: open s/t, get and set relevant metadata, close, create
-    # list of chunk objects, create pool, execute super_array with
-    # map(function, list of chunks)
-    #   x/y_start = col/row_splits[j/i]- starting original raster index
-    #   of the chunk
-    #   x/y_end = col/row_splits[j/i +1]- ending (up to, not including)
-    #   original raster index of the chunk
+        # === Multiprocessing notes ===
+        # Procedure: open s/t, get and set relevant metadata, close, create
+        # list of chunk objects, create pool, execute super_array with
+        # map(function, list of chunks)
+        #   x/y_start = col/row_splits[j/i]- starting original raster index
+        #   of the chunk
+        #   x/y_end = col/row_splits[j/i +1]- ending (up to, not including)
+        #   original raster index of the chunk
 
-    # Create simple chunk objects that hold data about each chunk to be
-    # sent to the processor
-    # Rows = i = y values, cols = j = x values
-    for i in range(0, len(row_splits) - 1):
-        for j in range(0, len(col_splits) - 1):
-            progress += 1
+        # Create simple chunk objects that hold data about each chunk to be
+        # sent to the processor
+        # Rows = i = y values, cols = j = x values
+        for i in range(0, len(row_splits) - 1):
+            for j in range(0, len(col_splits) - 1):
+                progress += 1
 
-            # chunk object to hold all the data
-            chunk = Chunk()
+                # chunk object to hold all the data
+                chunk = Chunk()
 
-            # These are specific to each chunk
-            chunk.progress = progress
-            chunk.tile = "{}-{}".format(i, j)
-            # x/y_start are the starting position of the original chunk
-            # before adjusting the dimensions to read in the super array;
-            # they are not used directly in the ReadAsArray() calls but are
-            # used as the location that the altered array should be
-            # written in the output bands WriteArray() calls.
-            chunk.x_start = col_splits[j]
-            chunk.y_start = row_splits[i]
-            # end positions of initial chunk, used to compute read window
-            chunk.x_end = col_splits[j + 1]
-            chunk.y_end = row_splits[i + 1]
+                # These are specific to each chunk
+                chunk.progress = progress
+                chunk.tile = "{}-{}".format(i, j)
+                # x/y_start are the starting position of the original chunk
+                # before adjusting the dimensions to read in the super array;
+                # they are not used directly in the ReadAsArray() calls but are
+                # used as the location that the altered array should be
+                # written in the output bands WriteArray() calls.
+                chunk.x_start = col_splits[j]
+                chunk.y_start = row_splits[i]
+                # end positions of initial chunk, used to compute read window
+                chunk.x_end = col_splits[j + 1]
+                chunk.y_end = row_splits[i + 1]
 
-            # These are constant over the whole raster
-            chunk.s_nodata = s_nodata
-            chunk.t_nodata = t_nodata
-            chunk.cell_size = cell_size
-            chunk.mdenoise_path = mdenoise_path
-            chunk.in_dem_path = in_dem_path
-            chunk.out_dem_path = out_dem_path
-            chunk.f2 = f2
-            chunk.rows = rows
-            chunk.cols = cols
-            chunk.total_chunks = total_chunks
-            chunk.method = method
-            chunk.options = options
-            chunk.verbose = verbose
-            chunk.start_time = start
-            chunk.bands = bands
+                # These are constant over the whole raster
+                chunk.s_nodata = s_nodata
+                chunk.t_nodata = t_nodata
+                chunk.cell_size = cell_size
+                chunk.mdenoise_path = mdenoise_path
+                chunk.in_dem_path = in_dem_path
+                chunk.out_dem_path = out_dem_path
+                chunk.f2 = f2
+                chunk.rows = rows
+                chunk.cols = cols
+                chunk.total_chunks = total_chunks
+                chunk.method = method
+                chunk.options = options
+                chunk.verbose = verbose
+                chunk.start_time = start
+                chunk.bands = bands
 
-            iterables.append(chunk)
+                iterables.append(chunk)
 
-    # Create lock to lock s_fh and t_fh reads and writes
-    l = mp.Lock()
+        # Create lock to lock s_fh and t_fh reads and writes
+        l = mp.Lock()
 
-    print("\nProcessing chunks...")
-    # Call pool.map with the lock initializer method, super array
-    # processor, and list of chunk objects.
-    # chunksize=1 keeps the input processing more-or-less in order
-    # (otherwise, for 4 processes working on 100 chunks, each process
-    # starts at 0, 25, 50, and 75).
-    # pool.map() guarantees the results will be in order, but not
-    # necessarily the processing.
-    # maxtasksperchild sets a limit on the number of tasks assigned to each
-    # process, hopefully limiting memory leaks within each subprocess
-    with mp.Pool(processes=num_threads,
-                 initializer=lock_init,
-                 initargs=(l,),
-                 maxtasksperchild=10
-                 ) as pool:
-        pool.map(ProcessSuperArray, iterables, chunksize=1)
+        print("\nProcessing chunks...")
+        # Call pool.map with the lock initializer method, super array
+        # processor, and list of chunk objects.
+        # chunksize=1 keeps the input processing more-or-less in order
+        # (otherwise, for 4 processes working on 100 chunks, each process
+        # starts at 0, 25, 50, and 75).
+        # pool.map() guarantees the results will be in order, but not
+        # necessarily the processing.
+        # maxtasksperchild sets a limit on the number of tasks assigned to each
+        # process, hopefully limiting memory leaks within each subprocess
+        with mp.Pool(processes=num_threads,
+                     initializer=lock_init,
+                     initargs=(l,),
+                     maxtasksperchild=10
+                     ) as pool:
+            pool.map(ProcessSuperArray, iterables, chunksize=1)
 
     # If it doesn't fit in one chunk, no need to chunk it up
     # TODO: finish this else path
-    # else:
-    #     # Create chunk object to pass to ProcessSuperArray
-    #     # We could re-implement the relevant bits here, but DRY
-    #     chunk = Chunk()
-    #
-    #     chunk.progress = 1  # Only one chunk
-    #     chunk.tile = "SingleChunk"
-    #     # x/y_start are 0, end are cols/rows
-    #     chunk.x_start = 0
-    #     chunk.y_start = 0
-    #     chunk.x_end = cols
-    #     chunk.y_end = rows
-    #
-    #     # These are constant over the whole raster
-    #     chunk.s_nodata = s_nodata
-    #     chunk.t_nodata = t_nodata
-    #     chunk.cell_size = cell_size
-    #     chunk.mdenoise_path = mdenoise_path
-    #     chunk.in_dem_path = in_dem_path
-    #     chunk.out_dem_path = out_dem_path
-    #     chunk.f2 = 2 * overlap
-    #     chunk.rows = rows
-    #     chunk.cols = cols
-    #     chunk.total_chunks = 1  # Only one chunk
-    #     chunk.method = method
-    #     chunk.options = options
-    #     chunk.verbose = verbose
-    #     chunk.start_time = start
-    #     chunk.bands = bands
-    #
-    #     # Create a global lock to satisify ProcessSuperArray()
-    #     l = mp.Lock()
-    #     lock_init(l)
-    #
-    #     ProcessSuperArray(chunk)
+    else:
+        # Create chunk object to pass to ProcessSuperArray
+        # We could re-implement the relevant bits here, but DRY
+        chunk = Chunk()
+
+        chunk.progress = 1  # Only one chunk
+        chunk.tile = "SingleChunk"
+        # x/y_start are 0, end are cols/rows
+        chunk.x_start = 0
+        chunk.y_start = 0
+        chunk.x_end = cols
+        chunk.y_end = rows
+
+        # These are constant over the whole raster
+        chunk.s_nodata = s_nodata
+        chunk.t_nodata = t_nodata
+        chunk.cell_size = cell_size
+        chunk.mdenoise_path = mdenoise_path
+        chunk.in_dem_path = in_dem_path
+        chunk.out_dem_path = out_dem_path
+        chunk.f2 = 0  # no overlap needed
+        chunk.rows = rows
+        chunk.cols = cols
+        chunk.total_chunks = 1  # Only one chunk
+        chunk.method = method
+        chunk.options = options
+        chunk.verbose = verbose
+        chunk.start_time = start
+        chunk.bands = bands
+
+        # Create a global lock to satisify ProcessSuperArray()
+        l = mp.Lock()
+        lock_init(l)
+
+        ProcessSuperArray(chunk)
 
         # sub_data = s_fh.ReadAsArray()
         # # Do something with the data
@@ -1011,7 +1011,7 @@ if "__main__" in __name__:
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"filter_size":30}, 3, True)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "TPI", {"filter_size":60}, num_threads=4, verbose=True)
     #ParallelRCP(smooth_dem, hs_dem, 1500, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
-    ParallelRCP(smooth_dem, hs_dem, 8000, filter_f, "hillshade", {"az":315, "alt":45}, num_threads=3, verbose=True)
+    ParallelRCP(smooth_dem, hs_dem, 1500, filter_f, "hillshade", {"az":315, "alt":45}, num_threads=3, verbose=True)
     #ParallelRCP(in_jpeg, out_jpeg, 2048, filter_f, "test", {}, num_threads=1, verbose=True)
     #ParallelRCP(hs_dem, clahe_dem, 3000, 50, "clahe", {"filter_size":filter_f, "clip_limit":clip}, num_threads=3, verbose=True)
 
