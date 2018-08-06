@@ -474,9 +474,6 @@ def ProcessSuperArray(chunk_info):
     #   Adjust x/y offset to appropriate place (for < 0 cases only).
     #   Reduce read size by f2 (we're not reading that edge area on one side)
     #   Move start or end value for super_array slice by f2
-    # Each of x/y can only be under (start of row/col) or over (end of row/col)
-    #   ie, the input raster must be broken into at least two chunks in each
-    #   direction
     # Checks both x and y, setting read and slice values for each dimension if
     # needed
     if x_off < 0:
@@ -544,7 +541,6 @@ def ProcessSuperArray(chunk_info):
         # value, except for edge cases that leave portions of the super_array
         # as NoData.
         super_array[sa_y_start:sa_y_end, sa_x_start:sa_x_end] = read_array
-        print(super_array.max())
         # Do something with the data
         if method == "blur_gauss":
             new_data = blur_gauss(super_array, options["filter_size"])
@@ -576,7 +572,6 @@ def ProcessSuperArray(chunk_info):
             temp_array = new_data[f2:-f2, f2:-f2]
         else:
             temp_array = new_data
-        print(temp_array.max())
         # If nodata in source, make sure nodata areas are transferred back
         if s_nodata is not None:
             # if verbose:
@@ -997,9 +992,9 @@ if "__main__" in __name__:
     #s_dem = "e:\\lidar\\dem\\DEM-ft-80-90-90_hs.tif"
 
     #in_dem = "c:\\temp\\gis\\elevation\\northdem1_ft.tif"
-    smooth_dem = "c:\\temp\\gis\\dem_state.tif"
-    hs_dem = "c:\\temp\\gis\\dem_state_hs_singlechunk_multiple.tif"
-    #lum = "c:\\temp\\gis\\skyshade\\lum\\1_45_315_150.csv"
+    smooth_dem = "c:\\temp\\gis\\elevation\\northdem1_ft.tif"
+    hs_dem = "c:\\temp\\gis\\elevation\\northdem1_ft_skytest_multi.tif"
+    lum = "c:\\temp\\gis\\skyshade\\lum\\1_45_315_150.csv"
 
     #in_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft-lzw.tif"
     #smooth_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30.tif"
@@ -1021,8 +1016,8 @@ if "__main__" in __name__:
 
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"filter_size":30}, 3, True)
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "TPI", {"filter_size":60}, num_threads=4, verbose=True)
-    #ParallelRCP(smooth_dem, hs_dem, 1500, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
-    ParallelRCP(smooth_dem, hs_dem, 1500, filter_f, "hillshade", {"az":315, "alt":45}, num_threads=3, verbose=True)
+    ParallelRCP(smooth_dem, hs_dem, 1500, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
+    #ParallelRCP(smooth_dem, hs_dem, 1500, filter_f, "hillshade", {"az":315, "alt":45}, num_threads=3, verbose=True)
     #ParallelRCP(in_jpeg, out_jpeg, 2048, filter_f, "test", {}, num_threads=1, verbose=True)
     #ParallelRCP(hs_dem, clahe_dem, 3000, 50, "clahe", {"filter_size":filter_f, "clip_limit":clip}, num_threads=3, verbose=True)
 
