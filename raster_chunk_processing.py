@@ -39,6 +39,7 @@ import contextlib
 import tempfile
 import warnings
 import csv
+import argparse
 import multiprocessing as mp
 #from scipy.signal import fftconvolve
 from astropy.convolution import convolve_fft
@@ -103,7 +104,7 @@ def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
             f.write("\n")
 
 
-def blur_mean(in_array, filter_size):
+def blur_mean(in_array, kernel_size):
     '''
     Performs a simple blur based on the average of nearby values. Uses circular
     mask from Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-arrayself.
@@ -111,13 +112,13 @@ def blur_mean(in_array, filter_size):
     tool.
     in_array:       The input array, should be read using the supper_array
                     technique from below.
-    filter_size:    The diameter (in grid cells) of the circle used to define
+    kernel_size:    The diameter (in grid cells) of the circle used to define
                     nearby pixels. A larger value creates more pronounced
                     smoothing.
     '''
 
     # Using circular mask from user Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-array
-    radius = math.floor(filter_size/2)
+    radius = math.floor(kernel_size/2)
     kernel = np.zeros((2*radius+1, 2*radius+1))
     y,x = np.ogrid[-radius:radius+1, -radius:radius+1]
     mask = x**2 + y**2 <= radius**2
@@ -354,13 +355,13 @@ def skymodel(in_array, lum_lines):
     # return scaled
 
 
-def TPI(in_array, filter_size):
+def TPI(in_array, kernel_size):
     '''
     Returns an array of the Topographic Position Index of each cell (the
     difference between the cell and the average of its neighbors).
     in_array:       The input array, should be read using the supper_array
                     technique from below.
-    filter_size:    The size, in cells, of the neighborhood used for the
+    kernel_size:    The size, in cells, of the neighborhood used for the
                     average (uses a circular window)
     '''
 
@@ -378,7 +379,7 @@ def TPI(in_array, filter_size):
     nan_array = np.where(in_array == s_nodata, np.nan, in_array)
 
     # Using circular mask from user Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-array
-    radius = math.floor(filter_size/2)
+    radius = math.floor(kernel_size/2)
     kernel = np.zeros((2*radius+1, 2*radius+1))
     y,x = np.ogrid[-radius:radius+1, -radius:radius+1]
     mask = x**2 + y**2 <= radius**2  # pythagorean theorem check for circle
@@ -543,19 +544,19 @@ def ProcessSuperArray(chunk_info):
         super_array[sa_y_start:sa_y_end, sa_x_start:sa_x_end] = read_array
         # Do something with the data
         if method == "blur_gauss":
-            new_data = blur_gauss(super_array, options["filter_size"])
+            new_data = blur_gauss(super_array, options["kernel_size"])
         elif method == "mdenoise":
             new_data = mdenoise(super_array, options["t"],
                                 options["n"], options["v"], tile)
         elif method == "clahe":
             new_data = exposure.equalize_adapthist(super_array.astype(int),
-                                                   options["filter_size"],
+                                                   options["kernel_size"],
                                                    options["clip_limit"])
             new_data *= 255.0  # scale CLAHE from 0-1 to 0-255
         elif method == "TPI":
-            new_data = TPI(super_array, options["filter_size"])
+            new_data = TPI(super_array, options["kernel_size"])
         elif method == "blur_mean":
-            new_data = blur_mean(super_array, options["filter_size"])
+            new_data = blur_mean(super_array, options["kernel_size"])
         elif method == "hillshade":
             new_data = hillshade(super_array, options["az"], options["alt"])
         elif method == "skymodel":
@@ -658,14 +659,14 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
 
     # Method name and option checks
     if method == "blur_gauss":
-        gauss_opts = ["filter_size"]
+        gauss_opts = ["kernel_size"]
         for opt in gauss_opts:
             if opt not in options:
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
-        # Check overlap against filter_size
-        if overlap < 2 * options["filter_size"]:
-            overlap = 2 * options["filter_size"]
+        # Check overlap against kernel_size
+        if overlap < 2 * options["kernel_size"]:
+            overlap = 2 * options["kernel_size"]
 
     elif method == "mdenoise":
         mdenoise_opts = ["t", "n", "v"]
@@ -675,31 +676,31 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                                  {}.".format(opt, method))
 
     elif method == "clahe":
-        clahe_opts = ["filter_size", "clip_limit"]
+        clahe_opts = ["kernel_size", "clip_limit"]
         for opt in clahe_opts:
             if opt not in options:
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
-        if overlap < 2 * options["filter_size"]:
-            overlap = 2 * options["filter_size"]
+        if overlap < 2 * options["kernel_size"]:
+            overlap = 2 * options["kernel_size"]
 
     elif method == "TPI":
-        TPI_opts = ["filter_size"]
+        TPI_opts = ["kernel_size"]
         for opt in TPI_opts:
             if opt not in options:
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
-        if overlap < 2 * options["filter_size"]:
-            overlap = 2 * options["filter_size"]
+        if overlap < 2 * options["kernel_size"]:
+            overlap = 2 * options["kernel_size"]
 
     elif method == "blur_mean":
-        mean_opts = ["filter_size"]
+        mean_opts = ["kernel_size"]
         for opt in mean_opts:
             if opt not in options:
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
-        if overlap < 2 * options["filter_size"]:
-            overlap = 2 * options["filter_size"]
+        if overlap < 2 * options["kernel_size"]:
+            overlap = 2 * options["kernel_size"]
 
     elif method == "hillshade":
         hillshade_opts = ["alt", "az"]
@@ -953,7 +954,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     #     # sub_data = s_fh.ReadAsArray()
     #     # # Do something with the data
     #     # if method == "fftconvolve":
-    #     #     new_data = blur(sub_data, options["filter_size"])
+    #     #     new_data = blur(sub_data, options["kernel_size"])
     #     # elif method == "mdenoise":
     #     #     new_data = mdenoise(sub_data, options["t"], options["n"], options["v"])
     #     # elif method == "hillshade":
@@ -983,6 +984,77 @@ mdenoise_path = "c:\\temp\\gis\\lidar\\MDenoise.exe"
 # Need this check for multiprocessing in windows
 if "__main__" in __name__:
 
+    # Required arguments:
+    # Parent:
+    #   -m method, string
+    #   -o overlap, int (filter_f below)
+    #   -s chunk size, int (window size below)
+    #   -p number of processes, int, default 1
+    #   --verbose sets verbose to True
+    # Method-specific:
+    #   -k kernel size, int (blur_mean, blur_gauss, TPI, clahe)
+    #   -n mdenoise n parameter, int
+    #   -t mdenoise t parameter, float
+    #   -v mdenoise v parameter, int
+    #   -c clahe clip parameter, float
+    #   -l luminance file
+
+    args = argparse.ArgumentParser()
+    all = args.add_argument_group('all', 'General options for all methods')
+    all.add_argument('-m', dest='method',
+                     choices=['blur_mean', 'blur_guass', 'mdenoise',
+                              'hillshade', 'skymodel', 'clahe', 'TPI'],
+                     help='Processing method')
+    all.add_argument('-o', dest='chunk_overlap', required=True, type=int,
+                     help='Chunk overlap size in pixels; try 25. Will be changed to 2*kernel size if less than 2*kernel size for relevant methods.')
+    all.add_argument('-s', dest='chunk_size', required=True, type=int,
+                     help='Chunk size in pixels; try 1500 for mdenoise')
+    all.add_argument('-p', dest='proc', defualt=1, type=int,
+                     help='Number of concurrent processes (default of 1)')
+    all.add_argument('--verbose', dest='verbose', default=False,
+                     help='Show detailed output', action='store_true')
+
+    kernel_args = args.add_argument_group('kernel',
+                     'Kernel size for blur_mean, blur_gauss, TPI, and CLAHE')
+    kernel_args.add_argument('-k', dest='kernel_size',
+                             type=int, help='Kernel size in pixels; try 30')
+
+    mdenoise_args = args.add_argument_group('mdenoise', 'Mesh Denoise (Sun et all, 2007) smoothing algorithm options')
+    mdenoise_args.add_argument('-n', dest='n', type=int, required=True,
+                               help='Iterations for Normal updating; try 10')
+    mdenoise_args.add_argument('-t', dest='t', type=float, required=True,
+                               help='Threshold; try .6')
+    mdenoise_args.add_argument('-v', dest='v', type=int, required=True,
+                               help='Iterations for Vertex updating; try 20')
+
+    clahe_args = args.add_argument_group('clahe',
+            'Contrast Limited Adaptive Histogram Equalization (CLAHE) options')
+    clahe_args.add_argument('-c', dest='clip_limit', type=float, required=True,
+                            help='Clipping limit. Try 0.01; higher values give more contrast')
+
+    hs_args = args.add_argument_group('hs', 'Hillshade options')
+    hs_args.add_argument('-az', dest='az', type=int, default=315,
+                         help='Azimuth (default of 315)')
+    hs_args.add_argument('-alt', dest='alt', type=int, default=45,
+                         help='Altitude (default of 45)')
+
+    sky_args = args.add_argument_group('sky', 'Skymodel options')
+    sky_args.add_argument('-l', dest='lum_file',
+                          help='Luminance file with header line removed')
+
+    out_args = args.add_argument_group('out', 'Input/Output files')
+    out_args.add_argument('infile', help='Input DEM')
+    out_args.add_argument('outfile', help='Output file')
+
+    arguments = args.parse_args()  # get the arguments as namespace object
+
+    arg_dict = vars(arguments)  # serve the arguments as dictionary
+
+    print(arg_dict)
+
+    if arg_dict['method'] is 'mdenoise' and not mdenoise_path:
+        raise ValueError('Path to mdenoise executable must be set (variable mdenoise_path in raster_chunk_processing.py)')
+
     #in_dem = "f:\\CacheValley_Lidar_2016\\ERDAS_IMG_Raster_DEM\\DEM-ft.tif"
     #smooth_dem = "f:\\CacheValley_Lidar_2016\\ERDAS_IMG_Raster_DEM\\DEM-ft-smoothed-80_60_80.tif"
     #hs_dem = "f:\\CacheValley_Lidar_2016\\ERDAS_IMG_Raster_DEM\\DEM-ft-smoothed-hs-80_60_80-z80.tif"
@@ -992,9 +1064,9 @@ if "__main__" in __name__:
     #s_dem = "e:\\lidar\\dem\\DEM-ft-80-90-90_hs.tif"
 
     #in_dem = "c:\\temp\\gis\\elevation\\northdem1_ft.tif"
-    smooth_dem = "c:\\temp\\gis\\elevation\\northdem1_ft.tif"
-    hs_dem = "c:\\temp\\gis\\elevation\\northdem1_ft_skytest_multi.tif"
-    lum = "c:\\temp\\gis\\skyshade\\lum\\1_45_315_150.csv"
+    # smooth_dem = "c:\\temp\\gis\\elevation\\northdem1_ft.tif"
+    # hs_dem = "c:\\temp\\gis\\elevation\\northdem1_ft_skytest_multi.tif"
+    # lum = "c:\\temp\\gis\\skyshade\\lum\\1_45_315_150.csv"
 
     #in_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft-lzw.tif"
     #smooth_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30.tif"
@@ -1014,12 +1086,12 @@ if "__main__" in __name__:
     clip = 0.01
 
 
-    #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"filter_size":30}, 3, True)
-    #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "TPI", {"filter_size":60}, num_threads=4, verbose=True)
-    ParallelRCP(smooth_dem, hs_dem, 1500, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
+    #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"kernel_size":30}, 3, True)
+    #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "TPI", {"kernel_size":60}, num_threads=4, verbose=True)
+    # ParallelRCP(smooth_dem, hs_dem, 1500, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
     #ParallelRCP(smooth_dem, hs_dem, 1500, filter_f, "hillshade", {"az":315, "alt":45}, num_threads=3, verbose=True)
     #ParallelRCP(in_jpeg, out_jpeg, 2048, filter_f, "test", {}, num_threads=1, verbose=True)
-    #ParallelRCP(hs_dem, clahe_dem, 3000, 50, "clahe", {"filter_size":filter_f, "clip_limit":clip}, num_threads=3, verbose=True)
+    #ParallelRCP(hs_dem, clahe_dem, 3000, 50, "clahe", {"kernel_size":filter_f, "clip_limit":clip}, num_threads=3, verbose=True)
 
     # times = {}
     # for i in range(1, 11, 1):
