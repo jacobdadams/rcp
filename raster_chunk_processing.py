@@ -130,7 +130,7 @@ def blur_mean(in_array, kernel_size):
 
 def blur_gauss(in_array, size):
     '''
-    Performs a guassian blur on an array of elevations. Modified from Mike
+    Performs a gaussian blur on an array of elevations. Modified from Mike
     Toews, https://gis.stackexchange.com/questions/9431/what-raster-smoothing-generalization-tools-are-availableself.
     in_array:       The input array, should be read using the supper_array
                     technique from below.
@@ -782,7 +782,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         t_band.SetNoDataValue(t_nodata)
 
     if verbose:
-        print("Method: {}".format(method))
+        #print("Method: {}".format(method))
         print("Options:")
         for opt in options:
             print("\t{}: {}".format(opt, options[opt]))
@@ -999,17 +999,17 @@ if "__main__" in __name__:
     #   -c clahe clip parameter, float
     #   -l luminance file
 
-    args = argparse.ArgumentParser()
+    args = argparse.ArgumentParser(usage='%(prog)s -m method [general options] [method specific options] infile outfile', description='Effectively divides arbitrarily large DEM rasters into chunks that will fit in memory and runs the specified processing method on each chunk, with parallel processing of the chunks available for significant runtime advantages. \r\nCurrent methods include smoothing algorithms (blur_mean, blur_gauss, and Sun et al\'s mdenoise), CLAHE contrast stretching, TPI, and Kennelly & Stewart\'s skymodel hillshade algorithm.')
     all = args.add_argument_group('all', 'General options for all methods')
     all.add_argument('-m', dest='method',
-                     choices=['blur_mean', 'blur_guass', 'mdenoise',
+                     choices=['blur_mean', 'blur_gauss', 'mdenoise',
                               'hillshade', 'skymodel', 'clahe', 'TPI'],
                      help='Processing method')
     all.add_argument('-o', dest='chunk_overlap', required=True, type=int,
                      help='Chunk overlap size in pixels; try 25. Will be changed to 2*kernel size if less than 2*kernel size for relevant methods.')
     all.add_argument('-s', dest='chunk_size', required=True, type=int,
                      help='Chunk size in pixels; try 1500 for mdenoise')
-    all.add_argument('-p', dest='proc', defualt=1, type=int,
+    all.add_argument('-p', dest='proc', default=1, type=int,
                      help='Number of concurrent processes (default of 1)')
     all.add_argument('--verbose', dest='verbose', default=False,
                      help='Show detailed output', action='store_true')
@@ -1019,17 +1019,17 @@ if "__main__" in __name__:
     kernel_args.add_argument('-k', dest='kernel_size',
                              type=int, help='Kernel size in pixels; try 30')
 
-    mdenoise_args = args.add_argument_group('mdenoise', 'Mesh Denoise (Sun et all, 2007) smoothing algorithm options')
-    mdenoise_args.add_argument('-n', dest='n', type=int, required=True,
+    mdenoise_args = args.add_argument_group('mdenoise', 'Mesh Denoise (Sun et al, 2007) smoothing algorithm options')
+    mdenoise_args.add_argument('-n', dest='n', type=int,
                                help='Iterations for Normal updating; try 10')
-    mdenoise_args.add_argument('-t', dest='t', type=float, required=True,
+    mdenoise_args.add_argument('-t', dest='t', type=float,
                                help='Threshold; try .6')
-    mdenoise_args.add_argument('-v', dest='v', type=int, required=True,
+    mdenoise_args.add_argument('-v', dest='v', type=int,
                                help='Iterations for Vertex updating; try 20')
 
     clahe_args = args.add_argument_group('clahe',
-            'Contrast Limited Adaptive Histogram Equalization (CLAHE) options')
-    clahe_args.add_argument('-c', dest='clip_limit', type=float, required=True,
+            'Contrast Limited Adaptive Histogram Equalization (CLAHE) options. Also requires -k.')
+    clahe_args.add_argument('-c', dest='clip_limit', type=float,
                             help='Clipping limit. Try 0.01; higher values give more contrast')
 
     hs_args = args.add_argument_group('hs', 'Hillshade options')
@@ -1055,6 +1055,19 @@ if "__main__" in __name__:
     if arg_dict['method'] is 'mdenoise' and not mdenoise_path:
         raise ValueError('Path to mdenoise executable must be set (variable mdenoise_path in raster_chunk_processing.py)')
 
+    #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"kernel_size":30}, 3, True)
+
+    input_DEM = arg_dict['infile']
+    out_file = arg_dict['outfile']
+    chunk_size = arg_dict['chunk_size']
+    kernel_size = arg_dict['kernel_size']
+    method = arg_dict['method']
+    overlap = arg_dict['chunk_overlap']
+    num_threads = arg_dict['proc']
+    verbose = arg_dict['verbose']
+
+    ParallelRCP(input_DEM, out_file, chunk_size, overlap, method, arg_dict, num_threads, verbose)
+
     #in_dem = "f:\\CacheValley_Lidar_2016\\ERDAS_IMG_Raster_DEM\\DEM-ft.tif"
     #smooth_dem = "f:\\CacheValley_Lidar_2016\\ERDAS_IMG_Raster_DEM\\DEM-ft-smoothed-80_60_80.tif"
     #hs_dem = "f:\\CacheValley_Lidar_2016\\ERDAS_IMG_Raster_DEM\\DEM-ft-smoothed-hs-80_60_80-z80.tif"
@@ -1078,12 +1091,12 @@ if "__main__" in __name__:
 
     # md105060 = n=10, t=0.50, v=60
 
-    filter_f = 20
-    window_size = 1500
-    n = 50
-    t = 0.60
-    v = 50
-    clip = 0.01
+    # filter_f = 20
+    # window_size = 1500
+    # n = 50
+    # t = 0.60
+    # v = 50
+    # clip = 0.01
 
 
     #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"kernel_size":30}, 3, True)
