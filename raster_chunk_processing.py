@@ -640,7 +640,9 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     if method == "blur_gauss":
         gauss_opts = ["kernel_size"]
         for opt in gauss_opts:
-            if opt not in options:
+            # if the req'd option isn't in the options dictionary or the value
+            # in the dictionary is None
+            if opt not in options or not options[opt]:
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
         # Check overlap against kernel_size
@@ -650,14 +652,14 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     elif method == "mdenoise":
         mdenoise_opts = ["t", "n", "v"]
         for opt in mdenoise_opts:
-            if opt not in options:
+            if opt not in options or not options[opt]:
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
 
     elif method == "clahe":
         clahe_opts = ["kernel_size", "clip_limit"]
         for opt in clahe_opts:
-            if opt not in options:
+            if opt not in options or not options[opt]:
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
         if overlap < 2 * options["kernel_size"]:
@@ -666,7 +668,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     elif method == "TPI":
         TPI_opts = ["kernel_size"]
         for opt in TPI_opts:
-            if opt not in options:
+            if opt not in options or not options[opt]:
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
         if overlap < 2 * options["kernel_size"]:
@@ -675,7 +677,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     elif method == "blur_mean":
         mean_opts = ["kernel_size"]
         for opt in mean_opts:
-            if opt not in options:
+            if opt not in options or not options[opt]:
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
         if overlap < 2 * options["kernel_size"]:
@@ -684,14 +686,14 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     elif method == "hillshade":
         hillshade_opts = ["alt", "az"]
         for opt in hillshade_opts:
-            if opt not in options:
+            if opt not in options or not options[opt]:
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
 
     elif method == "skymodel":
         sky_opts = ["lum_file"]
         for opt in sky_opts:
-            if opt not in options:
+            if opt not in options or not options[opt]:
                 raise ValueError("Required option {} not provided for method \
                                  {}.".format(opt, method))
     elif method == "test":
