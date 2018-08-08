@@ -40,6 +40,7 @@ import tempfile
 import warnings
 import csv
 import argparse
+import traceback
 import multiprocessing as mp
 #from scipy.signal import fftconvolve
 from astropy.convolution import convolve_fft
@@ -643,8 +644,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
             # if the req'd option isn't in the options dictionary or the value
             # in the dictionary is None
             if opt not in options or not options[opt]:
-                raise ValueError("Required option {} not provided for method \
-                                 {}.".format(opt, method))
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
         # Check overlap against kernel_size
         if overlap < 2 * options["kernel_size"]:
             overlap = 2 * options["kernel_size"]
@@ -653,15 +653,13 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         mdenoise_opts = ["t", "n", "v"]
         for opt in mdenoise_opts:
             if opt not in options or not options[opt]:
-                raise ValueError("Required option {} not provided for method \
-                                 {}.".format(opt, method))
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
 
     elif method == "clahe":
         clahe_opts = ["kernel_size", "clip_limit"]
         for opt in clahe_opts:
             if opt not in options or not options[opt]:
-                raise ValueError("Required option {} not provided for method \
-                                 {}.".format(opt, method))
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
         if overlap < 2 * options["kernel_size"]:
             overlap = 2 * options["kernel_size"]
 
@@ -669,8 +667,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         TPI_opts = ["kernel_size"]
         for opt in TPI_opts:
             if opt not in options or not options[opt]:
-                raise ValueError("Required option {} not provided for method \
-                                 {}.".format(opt, method))
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
         if overlap < 2 * options["kernel_size"]:
             overlap = 2 * options["kernel_size"]
 
@@ -678,8 +675,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         mean_opts = ["kernel_size"]
         for opt in mean_opts:
             if opt not in options or not options[opt]:
-                raise ValueError("Required option {} not provided for method \
-                                 {}.".format(opt, method))
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
         if overlap < 2 * options["kernel_size"]:
             overlap = 2 * options["kernel_size"]
 
@@ -687,15 +683,13 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         hillshade_opts = ["alt", "az"]
         for opt in hillshade_opts:
             if opt not in options or not options[opt]:
-                raise ValueError("Required option {} not provided for method \
-                                 {}.".format(opt, method))
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
 
     elif method == "skymodel":
         sky_opts = ["lum_file"]
         for opt in sky_opts:
             if opt not in options or not options[opt]:
-                raise ValueError("Required option {} not provided for method \
-                                 {}.".format(opt, method))
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
     elif method == "test":
         pass
     else:
@@ -977,8 +971,6 @@ if "__main__" in __name__:
 
     arg_dict = vars(arguments)  # serve the arguments as dictionary
 
-    print(arg_dict)
-
     if arg_dict['method'] is 'mdenoise' and not mdenoise_path:
         raise ValueError('Path to mdenoise executable must be set (variable mdenoise_path in raster_chunk_processing.py)')
 
@@ -991,11 +983,18 @@ if "__main__" in __name__:
     num_threads = arg_dict['proc']
     verbose = arg_dict['verbose']
 
-    ParallelRCP(input_DEM, out_file, chunk_size, overlap, method, arg_dict, num_threads, verbose)
+    try:
+        ParallelRCP(input_DEM, out_file, chunk_size, overlap, method, arg_dict, num_threads, verbose)
+    except Exception as e:
+        print("\n--- Error ---")
+        print(e)
+        if verbose:
+            print("\n")
+            print(traceback.format_exc())
 
     # md105060 = n=10, t=0.50, v=60
 
-    # Somethings going weird with edge cases: edge case tiles to the top and left of non-case edge tiles are coming out zero, but everything below and to the right come out as nodata.
+    # Something's going weird with edge cases: edge case tiles to the top and left of non-case edge tiles are coming out zero, but everything below and to the right come out as nodata.
     # Solved post-edge case problem (was checking if offset was > row/col, rather than if offset + size > row/col). Still getting all 0s in pre-edge cases, and dem values seem to be shifted up and left (-x and -y) by some multiple of the filter size.
     # Fixed! was giving weird offsets to band write array method. Should just be the starting col and row for that chunk (t_band.WriteArray(temp_array, col_splits[j], row_splits[i]))
 
