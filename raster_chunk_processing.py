@@ -768,11 +768,12 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                  "tiled=yes", "jpeg_quality=90", "bigtiff=yes"]
     lzw_opts = ["compress=lzw", "tiled=yes", "bigtiff=yes"]
     # Use jpeg compression opts if three bands, otherwise lzw
-    if bands == 3:
+    if bands == 3 and driver.LongName == 'GeoTIFF':
         opts = jpeg_opts
-    else:
+    elif driver.LongName == 'GeoTIFF':
         opts = lzw_opts
-        #opts = []
+    else:
+        opts = []
 
     t_fh = driver.Create(out_dem_path, cols, rows, bands, dtype, options=opts)
     t_fh.SetGeoTransform(transform)
@@ -810,14 +811,9 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                 lines.append(line)
         options["lum_lines"] = lines
 
-    # This check will parallelize the process assuming a file that is square or
-    # fairly close to it. A file with one dimension that vastly exceeds the
-    # limit while the other does not exceed it at all will attempt to be read
-    # as one chunk. This could lead to out-of-memory issues.
-    #
-    # Also, we could probably code up an automatic chunk_size setter based on
+    # We could probably code up an automatic chunk_size setter based on
     # data type and system memory limits
-    #if rows > chunk_size and cols > chunk_size:
+
     # calculate breaks every chunk_size pixels
     row_splits = list(range(0, rows, chunk_size))
     col_splits = list(range(0, cols, chunk_size))
@@ -912,57 +908,6 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                  maxtasksperchild=10
                  ) as pool:
         pool.map(ProcessSuperArray, iterables, chunksize=1)
-
-    # If it doesn't fit in one chunk, no need to chunk it up
-    # TODO: finish this else path
-    # else:
-    #     # Create chunk object to pass to ProcessSuperArray
-    #     # We could re-implement the relevant bits here, but DRY
-    #     chunk = Chunk()
-    #
-    #     chunk.progress = 1  # Only one chunk
-    #     chunk.tile = "SingleChunk"
-    #     # x/y_start are 0, end are cols/rows
-    #     chunk.x_start = 0
-    #     chunk.y_start = 0
-    #     chunk.x_end = cols
-    #     chunk.y_end = rows
-    #
-    #     # These are constant over the whole raster
-    #     chunk.s_nodata = s_nodata
-    #     chunk.t_nodata = t_nodata
-    #     chunk.cell_size = cell_size
-    #     chunk.mdenoise_path = mdenoise_path
-    #     chunk.in_dem_path = in_dem_path
-    #     chunk.out_dem_path = out_dem_path
-    #     chunk.f2 = 0  # no overlap needed
-    #     chunk.rows = rows
-    #     chunk.cols = cols
-    #     chunk.total_chunks = 1  # Only one chunk
-    #     chunk.method = method
-    #     chunk.options = options
-    #     chunk.verbose = verbose
-    #     chunk.start_time = start
-    #     chunk.bands = bands
-    #
-    #     # Create a global lock to satisify ProcessSuperArray()
-    #     l = mp.Lock()
-    #     lock_init(l)
-    #
-    #     ProcessSuperArray(chunk)
-    #
-    #     # sub_data = s_fh.ReadAsArray()
-    #     # # Do something with the data
-    #     # if method == "fftconvolve":
-    #     #     new_data = blur(sub_data, options["kernel_size"])
-    #     # elif method == "mdenoise":
-    #     #     new_data = mdenoise(sub_data, options["t"], options["n"], options["v"])
-    #     # elif method == "hillshade":
-    #     #     new_data = hillshade(super_array)
-    #     # else:
-    #     #     raise NotImplementedError("Method not implemented: %s" %method)
-    #     # t_band.WriteArray(new_data)
-    #     #raise NotImplementedError("Single chunk methods not implemented yet.")
 
     finish = datetime.datetime.now() - start
     if verbose:
