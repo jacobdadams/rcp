@@ -991,59 +991,7 @@ if "__main__" in __name__:
 
     ParallelRCP(input_DEM, out_file, chunk_size, overlap, method, arg_dict, num_threads, verbose)
 
-    #in_dem = "f:\\CacheValley_Lidar_2016\\ERDAS_IMG_Raster_DEM\\DEM-ft.tif"
-    #smooth_dem = "f:\\CacheValley_Lidar_2016\\ERDAS_IMG_Raster_DEM\\DEM-ft-smoothed-80_60_80.tif"
-    #hs_dem = "f:\\CacheValley_Lidar_2016\\ERDAS_IMG_Raster_DEM\\DEM-ft-smoothed-hs-80_60_80-z80.tif"
-
-    #in_dem = "f:\\CacheValley_Lidar_2016\\ERDAS_IMG_Raster_DEM\\DEM-ft.tif"
-    #smooth_dem = "e:\\lidar\\dem\\DEM-ft-md506050.tif"
-    #s_dem = "e:\\lidar\\dem\\DEM-ft-80-90-90_hs.tif"
-
-    #in_dem = "c:\\temp\\gis\\elevation\\northdem1_ft.tif"
-    # smooth_dem = "c:\\temp\\gis\\elevation\\northdem1_ft.tif"
-    # hs_dem = "c:\\temp\\gis\\elevation\\northdem1_ft_skytest_multi.tif"
-    # lum = "c:\\temp\\gis\\skyshade\\lum\\1_45_315_150.csv"
-
-    #in_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft-lzw.tif"
-    #smooth_dem = "e:\\lidar\\canyons\\dem\\CCDEM-ft_gauss30.tif"
-    #hs_dem = r'E:\Lidar\canyons\dem\CCDEM-ft_md506050_hs-lzw.tif'
-    #clahe_dem = r'E:\Lidar\canyons\dem\CCDEM-ft_md506050_hs_clahe20p01.tif'
-
-    #in_jpeg = "f:\\2018\\3_1_win.tif"
-    #out_jpeg = "f:\\2018\\3_1_win_test.tif"
-
     # md105060 = n=10, t=0.50, v=60
-
-    # filter_f = 20
-    # window_size = 1500
-    # n = 50
-    # t = 0.60
-    # v = 50
-    # clip = 0.01
-
-
-    #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"kernel_size":30}, 3, True)
-    #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "TPI", {"kernel_size":60}, num_threads=4, verbose=True)
-    # ParallelRCP(smooth_dem, hs_dem, 1500, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
-    #ParallelRCP(smooth_dem, hs_dem, 1500, filter_f, "hillshade", {"az":315, "alt":45}, num_threads=3, verbose=True)
-    #ParallelRCP(in_jpeg, out_jpeg, 2048, filter_f, "test", {}, num_threads=1, verbose=True)
-    #ParallelRCP(hs_dem, clahe_dem, 3000, 50, "clahe", {"kernel_size":filter_f, "clip_limit":clip}, num_threads=3, verbose=True)
-
-    # times = {}
-    # for i in range(1, 11, 1):
-    #     smooth_dem = "c:\\temp\\gis\\dem_state_ParallelRCPTest_{}.tif".format(i)
-    #     times[i] = ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "mdenoise", {"n":n, "t":t, "v":v}, i)
-    #
-    # for run in times:
-    #     report = "{} processes: {}".format(run, times[run])
-    #     print(report)
-
-    # CLAHE, interesting contrast stretcher... doesn't work here, but keep in back of mind
-    # Might make a good transparent hillshade base
-    #clahe_in = "c:\\temp\\gis\\lidar\\single_tests\\single-ft-md-506050.tif"
-    #clahe_out = "c:\\temp\\gis\\lidar\\single_tests\\clahe\\506050_clahe01-180.tif"
-    #smooth(clahe_in, clahe_out, window_size, "clahe", filter_f, t, n, v, clip)
-    #smooth(smooth_dem, hs_dem, window_size, "hillshade", filter_f, t, n, v)
 
     # Somethings going weird with edge cases: edge case tiles to the top and left of non-case edge tiles are coming out zero, but everything below and to the right come out as nodata.
     # Solved post-edge case problem (was checking if offset was > row/col, rather than if offset + size > row/col). Still getting all 0s in pre-edge cases, and dem values seem to be shifted up and left (-x and -y) by some multiple of the filter size.
@@ -1059,6 +1007,4 @@ if "__main__" in __name__:
     # Memory usage increases from ~200mb/process @ 500 to ~1.2gb/proc @ 1500 to ~2.2gb/proc @ 5000 (check these numbers; memory usage should scale linearly with array size (thus the square of the chunk size))
 
     # Jpeg stuff
-    # Need to figure out nodata- right now it's hosing the edge cases (nodata in super arrays?)
-    #   Changed so only does mask based on nodata if nodata exists
-    # Also need to change the whole thing so that the window is a multiple of the tile to fix jpeg compression issues that create artifacts when the bottom or right edges don't end at a tile boundary (manually setting window size to 1024 fixes this)
+    # need to change the whole thing so that the window is a multiple of the tile to fix jpeg compression issues that create artifacts when the bottom or right edges don't end at a tile boundary (manually setting window size to 1024 fixes this)
