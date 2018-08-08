@@ -920,7 +920,7 @@ if "__main__" in __name__:
     #   -c clahe clip parameter, float
     #   -l luminance file
 
-    args = argparse.ArgumentParser(usage='%(prog)s -m method [general options] [method specific options] infile outfile', description='Effectively divides arbitrarily large DEM rasters into chunks that will fit in memory and runs the specified processing method on each chunk, with parallel processing of the chunks available for significant runtime advantages. \r\nCurrent methods include smoothing algorithms (blur_mean, blur_gauss, and Sun et al\'s mdenoise), CLAHE contrast stretching, TPI, and Kennelly & Stewart\'s skymodel hillshade algorithm.')
+    args = argparse.ArgumentParser(usage='%(prog)s -m method [general options] [method specific options] infile outfile', description='Effectively divides arbitrarily large DEM rasters into chunks that will fit in memory and runs the specified processing method on each chunk, with parallel processing of the chunks available for significant runtime advantages. Current methods include smoothing algorithms (blur_mean, blur_gauss, and Sun et al\'s mdenoise), CLAHE contrast stretching, TPI, and Kennelly & Stewart\'s skymodel hillshade algorithm.')
     all = args.add_argument_group('all', 'General options for all methods')
     all.add_argument('-m', dest='method',
                      choices=['blur_mean', 'blur_gauss', 'mdenoise',
@@ -948,8 +948,7 @@ if "__main__" in __name__:
     mdenoise_args.add_argument('-v', dest='v', type=int,
                                help='Iterations for Vertex updating; try 20')
 
-    clahe_args = args.add_argument_group('clahe',
-            'Contrast Limited Adaptive Histogram Equalization (CLAHE) options. Also requires -k.')
+    clahe_args = args.add_argument_group('clahe', 'Contrast Limited Adaptive Histogram Equalization (CLAHE) options. Also requires -k.')
     clahe_args.add_argument('-c', dest='clip_limit', type=float,
                             help='Clipping limit. Try 0.01; higher values give more contrast')
 
@@ -971,9 +970,6 @@ if "__main__" in __name__:
 
     arg_dict = vars(arguments)  # serve the arguments as dictionary
 
-    if arg_dict['method'] is 'mdenoise' and not mdenoise_path:
-        raise ValueError('Path to mdenoise executable must be set (variable mdenoise_path in raster_chunk_processing.py)')
-
     input_DEM = arg_dict['infile']
     out_file = arg_dict['outfile']
     chunk_size = arg_dict['chunk_size']
@@ -984,7 +980,13 @@ if "__main__" in __name__:
     verbose = arg_dict['verbose']
 
     try:
-        ParallelRCP(input_DEM, out_file, chunk_size, overlap, method, arg_dict, num_threads, verbose)
+        # Make sure mdenoise path is set
+        if arg_dict['method'] == 'mdenoise' and not mdenoise_path:
+            raise ValueError('Path to mdenoise executable must be set (variable mdenoise_path in raster_chunk_processing.py)')
+        if arg_dict['method'] == 'mdenoise' and not os.path.isfile(mdenoise_path):
+            raise FileNotFoundError('mdenoise executable {} not found'.format(mdenoise_path))
+        ParallelRCP(input_DEM, out_file, chunk_size, overlap, method, arg_dict,
+                    num_threads, verbose)
     except Exception as e:
         print("\n--- Error ---")
         print(e)
@@ -992,20 +994,22 @@ if "__main__" in __name__:
             print("\n")
             print(traceback.format_exc())
 
-    # md105060 = n=10, t=0.50, v=60
 
-    # Something's going weird with edge cases: edge case tiles to the top and left of non-case edge tiles are coming out zero, but everything below and to the right come out as nodata.
-    # Solved post-edge case problem (was checking if offset was > row/col, rather than if offset + size > row/col). Still getting all 0s in pre-edge cases, and dem values seem to be shifted up and left (-x and -y) by some multiple of the filter size.
-    # Fixed! was giving weird offsets to band write array method. Should just be the starting col and row for that chunk (t_band.WriteArray(temp_array, col_splits[j], row_splits[i]))
+# General Notes
+# md105060 = n=10, t=0.50, v=60
 
-    # Window Sizes, all else constant:
-    # 2000: mdenoise.exe fails
-    # 1500: 8 chunks, total time:   3:12
-    # 1000: 15 chunks, total time:  3:20
-    # 500:  50 chunks, total time:  3:38
-    # Total time increases as number of chunks increases, due to overhead of writing/reading temp files
-    # Ditto for skymodel: as chunk size increases (number of chunks decreases), time decreases rapidly to a point around 1500-2000 chunk size, then greatly diminishing returns.
-    # Memory usage increases from ~200mb/process @ 500 to ~1.2gb/proc @ 1500 to ~2.2gb/proc @ 5000 (check these numbers; memory usage should scale linearly with array size (thus the square of the chunk size))
+# Something's going weird with edge cases: edge case tiles to the top and left of non-case edge tiles are coming out zero, but everything below and to the right come out as nodata.
+# Solved post-edge case problem (was checking if offset was > row/col, rather than if offset + size > row/col). Still getting all 0s in pre-edge cases, and dem values seem to be shifted up and left (-x and -y) by some multiple of the filter size.
+# Fixed! was giving weird offsets to band write array method. Should just be the starting col and row for that chunk (t_band.WriteArray(temp_array, col_splits[j], row_splits[i]))
 
-    # Jpeg stuff
-    # need to change the whole thing so that the window is a multiple of the tile to fix jpeg compression issues that create artifacts when the bottom or right edges don't end at a tile boundary (manually setting window size to 1024 fixes this)
+# Window Sizes, all else constant:
+# 2000: mdenoise.exe fails
+# 1500: 8 chunks, total time:   3:12
+# 1000: 15 chunks, total time:  3:20
+# 500:  50 chunks, total time:  3:38
+# Total time increases as number of chunks increases, due to overhead of writing/reading temp files
+# Ditto for skymodel: as chunk size increases (number of chunks decreases), time decreases rapidly to a point around 1500-2000 chunk size, then greatly diminishing returns.
+# Memory usage increases from ~200mb/process @ 500 to ~1.2gb/proc @ 1500 to ~2.2gb/proc @ 5000 (check these numbers; memory usage should scale linearly with array size (thus the square of the chunk size))
+
+# Jpeg stuff
+# need to change the whole thing so that the window is a multiple of the tile to fix jpeg compression issues that create artifacts when the bottom or right edges don't end at a tile boundary (manually setting window size to 1024 fixes this)
