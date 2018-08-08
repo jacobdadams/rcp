@@ -58,7 +58,7 @@ def sizeof_fmt(num, suffix='B'):
     Quick-and-dirty method for formating file size, from Sridhar Ratnakumar,
     https://stackoverflow.com/questions/1094841/reusable-library-to-get-human-readable-version-of-file-size.
     '''
-    for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
+    for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
         if abs(num) < 1024.0:
             return "%3.1f %s%s" % (num, unit, suffix)
         num /= 1024.0
@@ -81,12 +81,12 @@ def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
 
     rows = in_array.shape[0]
     cols = in_array.shape[1]
-    ncols = "ncols %d\n" %cols
-    nrows = "nrows %d\n" %rows
-    xllcorner = "xllcorner %f\n" %xll
-    yllcorner = "yllcorner %f\n" %yll
-    cellsize = "cellsize %f\n" %c_size
-    nodata_value = "nodata_value %f\n" %nodata
+    ncols = "ncols {}\n".format(cols)
+    nrows = "nrows {}\n".format(rows)
+    xllcorner = "xllcorner {}\n".format(xll)
+    yllcorner = "yllcorner {}\n".format(yll)
+    cellsize = "cellsize {}\n".format(c_size)
+    nodata_value = "nodata_value {}\n".format(nodata)
 
     with open(asc_path, 'w') as f:
         # Write Header
@@ -107,9 +107,9 @@ def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
 def blur_mean(in_array, kernel_size):
     '''
     Performs a simple blur based on the average of nearby values. Uses circular
-    mask from Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-arrayself.
-    This is the equivalent of ArcGIS' Focal Mean Statistics raster processing
-    tool.
+    mask from Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-array
+    This is the equivalent of ArcGIS' Focal Statistics (Mean) raster processing
+    tool using a circular neighborhood.
     in_array:       The input array, should be read using the supper_array
                     technique from below.
     kernel_size:    The diameter (in grid cells) of the circle used to define
@@ -118,9 +118,9 @@ def blur_mean(in_array, kernel_size):
     '''
 
     # Using circular mask from user Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-array
-    radius = math.floor(kernel_size/2)
-    kernel = np.zeros((2*radius+1, 2*radius+1))
-    y,x = np.ogrid[-radius:radius+1, -radius:radius+1]
+    radius = math.floor(kernel_size / 2)
+    kernel = np.zeros((2 * radius + 1, 2 * radius + 1))
+    y, x = np.ogrid[-radius:radius + 1, -radius:radius + 1]
     mask = x**2 + y**2 <= radius**2
     kernel[mask] = 1
     circular_mean = gf(in_array, np.mean, footprint=kernel)
@@ -131,7 +131,7 @@ def blur_mean(in_array, kernel_size):
 def blur_gauss(in_array, size):
     '''
     Performs a gaussian blur on an array of elevations. Modified from Mike
-    Toews, https://gis.stackexchange.com/questions/9431/what-raster-smoothing-generalization-tools-are-availableself.
+    Toews, https://gis.stackexchange.com/questions/9431/what-raster-smoothing-generalization-tools-are-available
     in_array:       The input array, should be read using the supper_array
                     technique from below.
     size:           The size (in grid cells) of the gaussian blur kernel
@@ -152,8 +152,6 @@ def blur_gauss(in_array, size):
     # Create new array with s_nodata values set to np.nan (for edges of raster)
     nan_array = np.where(in_array == s_nodata, np.nan, in_array)
 
-    # expand cleaned_array to fit edge of kernel
-    #padded_array = np.pad(nan_array, size, 'symmetric')
     # build kernel (Gaussian blur function)
     x, y = np.mgrid[-size:size + 1, -size:size + 1]
     g = np.exp(-(x**2 / float(size) + y**2 / float(size)))
@@ -199,8 +197,8 @@ def mdenoise(in_array, t, n, v, tile=None):
     # Nodata Masking:
     # nd values get passed to mdenoise via array
     # Return array has nd values mostly intact except for some weird burrs that
-    # need to be trimmed for sake of contours (done in smooth() by copying over
-    # nodata values as mask, not in here)
+    # need to be trimmed for sake of contours (done in ProcessSuperArray() by
+    # copying over nodata values as mask, not in here)
 
     # Should be multiprocessing safe; source and target files identified with
     # pid or tile in the file name, no need for locking.
@@ -260,7 +258,7 @@ def hillshade(in_array, az, alt, scale=False):
                     stretching for each chunk.
     '''
 
-    # Create new array wsith s_nodata values set to np.nan (for edges of raster)
+    # Create new array wsith s_nodata values set to np.nan (for edges)
     nan_array = np.where(in_array == s_nodata, np.nan, in_array)
 
     x = np.zeros(nan_array.shape)
@@ -306,7 +304,7 @@ def hillshade(in_array, az, alt, scale=False):
 
 def skymodel(in_array, lum_lines):
     '''
-    Creates a unique hillshade based on a skymodel, implmenting the modthod
+    Creates a unique hillshade based on a skymodel, implmenting the method
     defined in Kennelly and Steward (2014), A Uniform Sky Illumination Model to
     Enhance Shading of Terrain and Urban Areas.
 
@@ -337,7 +335,7 @@ def skymodel(in_array, lum_lines):
 
     return skyshade
 
-    # --- SCALING DOESN'T WORK- The min/max for each chunk are differentself.
+    # --- SCALING DOESN'T WORK- The min/max for each chunk are different.
     # --- We'd need to scale after the entire thing is finished.
     # Scale to 1-255
     # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
@@ -365,23 +363,14 @@ def TPI(in_array, kernel_size):
                     average (uses a circular window)
     '''
 
-    # Change all NoData values to mean of valid values to fix issues with
-    # massive (float32.max) NoData values completely overwhelming other array
-    # data. Using mean instead of 0 gives a little bit more usable data on
-    # edges.
-    # This gets us 80% of the way there. For even better, we could use a mask
-    # and replace nodata with the average pixel value of all pixels within
-    # a 100-pixel radius, which would give a more area-appropriate mean value
-    # as elevation is usually spatially autocorrelated.
-    # Or just use np.nan
-
-    # Create new array with s_nodata values set to np.nan (for edges of raster)
+    # Create new array with s_nodata values set to np.nan (for edges of raster,
+    # allows algorithm to properly ingore nodata values)
     nan_array = np.where(in_array == s_nodata, np.nan, in_array)
 
     # Using circular mask from user Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-array
-    radius = math.floor(kernel_size/2)
-    kernel = np.zeros((2*radius+1, 2*radius+1))
-    y,x = np.ogrid[-radius:radius+1, -radius:radius+1]
+    radius = math.floor(kernel_size / 2)
+    kernel = np.zeros((2 * radius + 1, 2 * radius + 1))
+    y, x = np.ogrid[-radius:radius + 1, -radius:radius + 1]
     mask = x**2 + y**2 <= radius**2  # pythagorean theorem check for circle
     kernel[mask] = 1  # Creates circle mask in kernel using indexes from ogrid
     with warnings.catch_warnings():
@@ -496,13 +485,7 @@ def ProcessSuperArray(chunk_info):
     percent = (progress / total_chunks) * 100
     elapsed = datetime.datetime.now() - starttime
     if verbose:
-        print("Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4} Indices: [{5}:{6}, {7}:{8}] PID: {9}".format(tile, progress,
-                                                     total_chunks, percent,
-                                                     elapsed, read_y_off,
-                                                     read_y_off + read_y_size,
-                                                     read_x_off,
-                                                     read_x_off + read_x_size,
-                                                     mp.current_process().pid))
+        print("Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4} Indices: [{5}:{6}, {7}:{8}] PID: {9}".format(tile, progress, total_chunks, percent, elapsed, read_y_off, read_y_off + read_y_size, read_x_off, read_x_off + read_x_size, mp.current_process().pid))
     else:
         print("Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4}".format(tile, progress, total_chunks, percent, elapsed))
 
@@ -514,7 +497,6 @@ def ProcessSuperArray(chunk_info):
         with lock:
             # ===== LOCK HERE =====
             # Open source file handle
-            # print("Opening {0:s}...".format(in_dem_path))
             s_fh = gdal.Open(source_dem_path, gdal.GA_ReadOnly)
             s_band = s_fh.GetRasterBand(band)
 
@@ -575,11 +557,6 @@ def ProcessSuperArray(chunk_info):
             temp_array = new_data
         # If nodata in source, make sure nodata areas are transferred back
         if s_nodata is not None:
-            # if verbose:
-                # print("Copying target nodata value {} back into array where \
-                #       source nodata value {} was found".format(
-                #           t_nodata, s_nodata))
-
             # slice down super_array to get original chunk of data (ie,
             # super_array minus additional data on edges) to use for finding
             # NoData areas
@@ -649,6 +626,8 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     options:        Dictionary of opt, value pairs to be passed to the
                     processing tool. Any opts that don't apply to the specific
                     method will be ignored.
+    num_threads:    The number of concurrent processes to be spawned by
+                    mp.pool().
     verbose:        Flag to print out more information (including mdenoise
                     output)
 
@@ -919,7 +898,8 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
 # Main Variables
 
 # Global variables
-# These are read in as part of opening the file in smooth() but will be used by WriteASC() as part of the mdenoise() call
+# These are read in as part of opening the file in ProcessSuperArray() but will
+# be used by WriteASC() as part of the mdenoise() call
 # s_nodata is used several places; really needs to have been set in input DEM.
 global cell_size
 global s_nodata
@@ -999,8 +979,6 @@ if "__main__" in __name__:
 
     if arg_dict['method'] is 'mdenoise' and not mdenoise_path:
         raise ValueError('Path to mdenoise executable must be set (variable mdenoise_path in raster_chunk_processing.py)')
-
-    #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"kernel_size":30}, 3, True)
 
     input_DEM = arg_dict['infile']
     out_file = arg_dict['outfile']
