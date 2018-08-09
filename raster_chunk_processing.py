@@ -42,11 +42,9 @@ import csv
 import argparse
 import traceback
 import multiprocessing as mp
-#from scipy.signal import fftconvolve
 from astropy.convolution import convolve_fft
 from skimage import exposure
 from osgeo import gdal, gdal_array
-from scipy.ndimage.filters import generic_filter as gf
 
 
 # Just a simple class to hold the information about each chunk
@@ -118,13 +116,17 @@ def blur_mean(in_array, kernel_size):
                     smoothing.
     '''
 
-    # Using circular mask from user Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-array
+    # Using modified circular mask from user Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-array
+    # fft convolve instead of gf(np.mean)
+    nan_array = np.where(in_array == s_nodata, np.nan, in_array)
     radius = math.floor(kernel_size / 2)
-    kernel = np.zeros((2 * radius + 1, 2 * radius + 1))
+    kernel = np.ones((2 * radius + 1, 2 * radius + 1)) / (2 * radius + 1)
     y, x = np.ogrid[-radius:radius + 1, -radius:radius + 1]
-    mask = x**2 + y**2 <= radius**2
-    kernel[mask] = 1
-    circular_mean = gf(in_array, np.mean, footprint=kernel)
+    mask = x**2 + y**2 > radius**2  # we want to mask the outside of the circle
+    kernel[mask] = 0
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        circular_mean = convolve_fft(nan_array, kernel, nan_treatment='interpolate')
 
     return circular_mean
 
@@ -150,10 +152,16 @@ def blur_gauss(in_array, size):
     # cleaned_array = np.copy(in_array)
     # np.putmask(cleaned_array, cleaned_array==s_nodata, array_mean)
 
+    # convolving: output pixel is the sum of the multiplication of each value
+    # covered by the kernel with the associated kernel value (the kernel is a
+    # set size/shape and each position has a value, which is the multiplication
+    # factor used in the convolution).
+
     # Create new array with s_nodata values set to np.nan (for edges of raster)
     nan_array = np.where(in_array == s_nodata, np.nan, in_array)
 
     # build kernel (Gaussian blur function)
+    # g is a 2d gaussian distribution of size "size"
     x, y = np.mgrid[-size:size + 1, -size:size + 1]
     g = np.exp(-(x**2 / float(size) + y**2 / float(size)))
     g = (g / g.sum()).astype(nan_array.dtype)
@@ -364,21 +372,9 @@ def TPI(in_array, kernel_size):
                     average (uses a circular window)
     '''
 
-    # Create new array with s_nodata values set to np.nan (for edges of raster,
-    # allows algorithm to properly ingore nodata values)
-    nan_array = np.where(in_array == s_nodata, np.nan, in_array)
-
-    # Using circular mask from user Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-array
-    radius = math.floor(kernel_size / 2)
-    kernel = np.zeros((2 * radius + 1, 2 * radius + 1))
-    y, x = np.ogrid[-radius:radius + 1, -radius:radius + 1]
-    mask = x**2 + y**2 <= radius**2  # pythagorean theorem check for circle
-    kernel[mask] = 1  # Creates circle mask in kernel using indexes from ogrid
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)
-        circular_mean = gf(nan_array, np.nanmean, footprint=kernel)
-
-    return nan_array - circular_mean
+    # Use the blur_mean method to calculate average of neighbors
+    circular_mean = blur_mean(in_array, kernel_size)
+    return in_array - circular_mean
 
 
 def ProcessSuperArray(chunk_info):
