@@ -161,7 +161,7 @@ def blur_gauss(in_array, size):
     nan_array = np.where(in_array == s_nodata, np.nan, in_array)
 
     # build kernel (Gaussian blur function)
-    # g is a 2d gaussian distribution of size "size"
+    # g is a 2d gaussian distribution of size (2*size) + 1
     x, y = np.mgrid[-size:size + 1, -size:size + 1]
     g = np.exp(-(x**2 / float(size) + y**2 / float(size)))
     g = (g / g.sum()).astype(nan_array.dtype)
