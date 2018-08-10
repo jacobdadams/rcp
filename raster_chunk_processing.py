@@ -103,7 +103,7 @@ def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
             f.write("\n")
 
 
-def blur_mean(in_array, kernel_size):
+def blur_mean(in_array, radius):
     '''
     Performs a simple blur based on the average of nearby values. Uses circular
     mask from Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-array
@@ -111,33 +111,38 @@ def blur_mean(in_array, kernel_size):
     tool using a circular neighborhood.
     in_array:       The input array, should be read using the supper_array
                     technique from below.
-    kernel_size:    The diameter (in grid cells) of the circle used to define
+    radius:         The radius (in grid cells) of the circle used to define
                     nearby pixels. A larger value creates more pronounced
-                    smoothing.
+                    smoothing. The diameter of the circle becomes 2*radius + 1,
+                    to account for the subject pixel.
     '''
 
     # Using modified circular mask from user Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-array
-    # fft convolve instead of gf(np.mean)
+    # Using convolve_fft instead of gf(np.mean), which massively speeds up
+    # execution (from ~3 hours to ~5 minutes on one dataset).
     nan_array = np.where(in_array == s_nodata, np.nan, in_array)
-    radius = math.floor(kernel_size / 2)
-    kernel = np.ones((2 * radius + 1, 2 * radius + 1)) / (2 * radius + 1)
+    diameter = 2 * radius + 1
+    # Create a kernel of values 1/N
+    kernel = np.ones((diameter, diameter)) / (diameter**2)
+    # Create a circular mask, set cells of kernel outside circle to 0
     y, x = np.ogrid[-radius:radius + 1, -radius:radius + 1]
-    mask = x**2 + y**2 > radius**2  # we want to mask the outside of the circle
+    mask = x**2 + y**2 > radius**2
     kernel[mask] = 0
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
-        circular_mean = convolve_fft(nan_array, kernel, nan_treatment='interpolate')
+        circular_mean = convolve_fft(nan_array, kernel,
+                                     nan_treatment='interpolate')
 
     return circular_mean
 
 
-def blur_gauss(in_array, size):
+def blur_gauss(in_array, radius):
     '''
     Performs a gaussian blur on an array of elevations. Modified from Mike
     Toews, https://gis.stackexchange.com/questions/9431/what-raster-smoothing-generalization-tools-are-available
     in_array:       The input array, should be read using the supper_array
                     technique from below.
-    size:           The size (in grid cells) of the gaussian blur kernel
+    radius:         The radius (in grid cells) of the gaussian blur kernel
     '''
 
     # This comment block is old and left here for posterity
@@ -162,8 +167,8 @@ def blur_gauss(in_array, size):
 
     # build kernel (Gaussian blur function)
     # g is a 2d gaussian distribution of size (2*size) + 1
-    x, y = np.mgrid[-size:size + 1, -size:size + 1]
-    g = np.exp(-(x**2 / float(size) + y**2 / float(size)))
+    x, y = np.mgrid[-radius:radius + 1, -radius:radius + 1]
+    g = np.exp(-(x**2 / float(radius) + y**2 / float(radius)))
     g = (g / g.sum()).astype(nan_array.dtype)
     # Convolve the data and Gaussian function (do the Gaussian blur)
     # Supressing runtime warnings due to NaNs (they just get hidden by NoData
@@ -362,18 +367,19 @@ def skymodel(in_array, lum_lines):
     # return scaled
 
 
-def TPI(in_array, kernel_size):
+def TPI(in_array, radius):
     '''
     Returns an array of the Topographic Position Index of each cell (the
     difference between the cell and the average of its neighbors).
     in_array:       The input array, should be read using the supper_array
                     technique from below.
-    kernel_size:    The size, in cells, of the neighborhood used for the
-                    average (uses a circular window)
+    radius:         The radius, in cells, of the neighborhood used for the
+                    average (uses a circular window of diameter 2 * radius + 1
+                    to account for the subject pixel)
     '''
 
     # Use the blur_mean method to calculate average of neighbors
-    circular_mean = blur_mean(in_array, kernel_size)
+    circular_mean = blur_mean(in_array, radius)
     return in_array - circular_mean
 
 
