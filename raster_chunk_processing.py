@@ -33,7 +33,6 @@
 import numpy as np
 import datetime
 import os
-import math
 import subprocess
 import contextlib
 import tempfile
@@ -41,6 +40,7 @@ import warnings
 import csv
 import argparse
 import traceback
+import math
 import multiprocessing as mp
 from astropy.convolution import convolve_fft
 from skimage import exposure
@@ -122,11 +122,14 @@ def blur_mean(in_array, radius):
     # execution (from ~3 hours to ~5 minutes on one dataset).
     nan_array = np.where(in_array == s_nodata, np.nan, in_array)
     diameter = 2 * radius + 1
-    # Create a kernel of values 1/N
-    kernel = np.ones((diameter, diameter)) / (diameter**2)
-    # Create a circular mask, set cells of kernel outside circle to 0
+    # Create a circular mask
     y, x = np.ogrid[-radius:radius + 1, -radius:radius + 1]
     mask = x**2 + y**2 > radius**2
+    # Determine number of Falses (ie, cells in kernel not masked out)
+    valid_entries = mask.size - np.count_nonzero(mask)
+    # Create a kernel of 1/(the number of valid entries after masking)
+    kernel = np.ones((diameter, diameter)) / (valid_entries)
+    # Mask away the non-circular areas
     kernel[mask] = 0
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
@@ -136,7 +139,7 @@ def blur_mean(in_array, radius):
     return circular_mean
 
 
-def blur_gauss(in_array, radius):
+def blur_gauss(in_array, sigma, radius=30):
     '''
     Performs a gaussian blur on an array of elevations. Modified from Mike
     Toews, https://gis.stackexchange.com/questions/9431/what-raster-smoothing-generalization-tools-are-available
@@ -168,8 +171,10 @@ def blur_gauss(in_array, radius):
     # build kernel (Gaussian blur function)
     # g is a 2d gaussian distribution of size (2*size) + 1
     x, y = np.mgrid[-radius:radius + 1, -radius:radius + 1]
-    g = np.exp(-(x**2 / float(radius) + y**2 / float(radius)))
-    g = (g / g.sum()).astype(nan_array.dtype)
+    # g = np.exp(-(x**2 / float(radius) + y**2 / float(radius)))
+    # g = (g / g.sum()).astype(nan_array.dtype)
+    twosig = 2 * sigma**2
+    g = np.exp(-(x**2 / twosig + y**2 / twosig)) / (twosig * math.pi)
     # Convolve the data and Gaussian function (do the Gaussian blur)
     # Supressing runtime warnings due to NaNs (they just get hidden by NoData
     # masks in the supper_array rebuild anyways)
@@ -529,7 +534,7 @@ def ProcessSuperArray(chunk_info):
         super_array[sa_y_start:sa_y_end, sa_x_start:sa_x_end] = read_array
         # Do something with the data
         if method == "blur_gauss":
-            new_data = blur_gauss(super_array, options["radius"])
+            new_data = blur_gauss(super_array, options["sigma"], options["radius"])
         elif method == "mdenoise":
             new_data = mdenoise(super_array, options["t"],
                                 options["n"], options["v"], tile)
@@ -641,7 +646,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
 
     # Method name and option checks
     if method == "blur_gauss":
-        gauss_opts = ["radius"]
+        gauss_opts = ["radius", "sigma"]
         for opt in gauss_opts:
             # if the req'd option isn't in the options dictionary or the value
             # in the dictionary is None
@@ -916,6 +921,7 @@ if "__main__" in __name__:
     #   --verbose sets verbose to True
     # Method-specific:
     #   -r kernel radius, int (blur_mean, blur_gauss, TPI)
+    #   -d gaussian standard distribution (sigma), int
     #   -n mdenoise n parameter, int
     #   -t mdenoise t parameter, float
     #   -v mdenoise v parameter, int
@@ -941,6 +947,9 @@ if "__main__" in __name__:
     kernel_args = args.add_argument_group('kernel', 'Kernel radius for blur_mean, blur_gauss, TPI, and CLAHE')
     kernel_args.add_argument('-r', dest='radius',
                              type=int, help='Kernel radius in pixels; try 15')
+
+    blur_gauss_args = args.add_argument_group('blur_gauss', 'Gaussian blur options; also requires -k')
+    blur_gauss_args.add_argument('-d', dest='sigma', type=int, help='Standard deviation of the distribution (sigma). Controls amount of smoothing; try 1.')
 
     mdenoise_args = args.add_argument_group('mdenoise', 'Mesh Denoise (Sun et al, 2007) smoothing algorithm options')
     mdenoise_args.add_argument('-n', dest='n', type=int,
@@ -977,7 +986,7 @@ if "__main__" in __name__:
     input_DEM = arg_dict['infile']
     out_file = arg_dict['outfile']
     chunk_size = arg_dict['chunk_size']
-    radius = arg_dict['radius']
+    #radius = arg_dict['radius']
     method = arg_dict['method']
     overlap = arg_dict['chunk_overlap']
     num_threads = arg_dict['proc']
