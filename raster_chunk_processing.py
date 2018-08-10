@@ -529,7 +529,7 @@ def ProcessSuperArray(chunk_info):
         super_array[sa_y_start:sa_y_end, sa_x_start:sa_x_end] = read_array
         # Do something with the data
         if method == "blur_gauss":
-            new_data = blur_gauss(super_array, options["kernel_size"])
+            new_data = blur_gauss(super_array, options["radius"])
         elif method == "mdenoise":
             new_data = mdenoise(super_array, options["t"],
                                 options["n"], options["v"], tile)
@@ -539,9 +539,9 @@ def ProcessSuperArray(chunk_info):
                                                    options["clip_limit"])
             new_data *= 255.0  # scale CLAHE from 0-1 to 0-255
         elif method == "TPI":
-            new_data = TPI(super_array, options["kernel_size"])
+            new_data = TPI(super_array, options["radius"])
         elif method == "blur_mean":
-            new_data = blur_mean(super_array, options["kernel_size"])
+            new_data = blur_mean(super_array, options["radius"])
         elif method == "hillshade":
             new_data = hillshade(super_array, options["az"], options["alt"])
         elif method == "skymodel":
@@ -641,15 +641,15 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
 
     # Method name and option checks
     if method == "blur_gauss":
-        gauss_opts = ["kernel_size"]
+        gauss_opts = ["radius"]
         for opt in gauss_opts:
             # if the req'd option isn't in the options dictionary or the value
             # in the dictionary is None
             if opt not in options or not options[opt]:
                 raise ValueError("Required option {} not provided for method {}.".format(opt, method))
-        # Check overlap against kernel_size
-        if overlap < 2 * options["kernel_size"]:
-            overlap = 2 * options["kernel_size"]
+        # Check overlap against radius
+        if overlap < 2 * options["radius"]:
+            overlap = 2 * options["radius"]
 
     elif method == "mdenoise":
         mdenoise_opts = ["t", "n", "v"]
@@ -666,20 +666,20 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
             overlap = 2 * options["kernel_size"]
 
     elif method == "TPI":
-        TPI_opts = ["kernel_size"]
+        TPI_opts = ["radius"]
         for opt in TPI_opts:
             if opt not in options or not options[opt]:
                 raise ValueError("Required option {} not provided for method {}.".format(opt, method))
-        if overlap < 2 * options["kernel_size"]:
-            overlap = 2 * options["kernel_size"]
+        if overlap < 2 * options["radius"]:
+            overlap = 2 * options["radius"]
 
     elif method == "blur_mean":
-        mean_opts = ["kernel_size"]
+        mean_opts = ["radius"]
         for opt in mean_opts:
             if opt not in options or not options[opt]:
                 raise ValueError("Required option {} not provided for method {}.".format(opt, method))
-        if overlap < 2 * options["kernel_size"]:
-            overlap = 2 * options["kernel_size"]
+        if overlap < 2 * options["radius"]:
+            overlap = 2 * options["radius"]
 
     elif method == "hillshade":
         hillshade_opts = ["alt", "az"]
@@ -915,11 +915,12 @@ if "__main__" in __name__:
     #   -p number of processes, int, default 1
     #   --verbose sets verbose to True
     # Method-specific:
-    #   -k kernel size, int (blur_mean, blur_gauss, TPI, clahe)
+    #   -r kernel radius, int (blur_mean, blur_gauss, TPI)
     #   -n mdenoise n parameter, int
     #   -t mdenoise t parameter, float
     #   -v mdenoise v parameter, int
     #   -c clahe clip parameter, float
+    #   -k clahe kernel size, int
     #   -l luminance file
 
     args = argparse.ArgumentParser(usage='%(prog)s -m method [general options] [method specific options] infile outfile', description='Effectively divides arbitrarily large DEM rasters into chunks that will fit in memory and runs the specified processing method on each chunk, with parallel processing of the chunks available for significant runtime advantages. Current methods include smoothing algorithms (blur_mean, blur_gauss, and Sun et al\'s mdenoise), CLAHE contrast stretching, TPI, and Kennelly & Stewart\'s skymodel hillshade algorithm.')
@@ -937,10 +938,9 @@ if "__main__" in __name__:
     all.add_argument('--verbose', dest='verbose', default=False,
                      help='Show detailed output', action='store_true')
 
-    kernel_args = args.add_argument_group('kernel',
-                     'Kernel size for blur_mean, blur_gauss, TPI, and CLAHE')
-    kernel_args.add_argument('-k', dest='kernel_size',
-                             type=int, help='Kernel size in pixels; try 30')
+    kernel_args = args.add_argument_group('kernel', 'Kernel radius for blur_mean, blur_gauss, TPI, and CLAHE')
+    kernel_args.add_argument('-r', dest='radius',
+                             type=int, help='Kernel radius in pixels; try 15')
 
     mdenoise_args = args.add_argument_group('mdenoise', 'Mesh Denoise (Sun et al, 2007) smoothing algorithm options')
     mdenoise_args.add_argument('-n', dest='n', type=int,
@@ -950,9 +950,11 @@ if "__main__" in __name__:
     mdenoise_args.add_argument('-v', dest='v', type=int,
                                help='Iterations for Vertex updating; try 20')
 
-    clahe_args = args.add_argument_group('clahe', 'Contrast Limited Adaptive Histogram Equalization (CLAHE) options. Also requires -k.')
+    clahe_args = args.add_argument_group('clahe', 'Contrast Limited Adaptive Histogram Equalization (CLAHE) options')
     clahe_args.add_argument('-c', dest='clip_limit', type=float,
                             help='Clipping limit. Try 0.01; higher values give more contrast')
+    kernel_args.add_argument('-k', dest='kernel_size',
+                             type=int, help='Kernel size in pixels; try 30')
 
     hs_args = args.add_argument_group('hs', 'Hillshade options')
     hs_args.add_argument('-az', dest='az', type=int, default=315,
@@ -975,7 +977,7 @@ if "__main__" in __name__:
     input_DEM = arg_dict['infile']
     out_file = arg_dict['outfile']
     chunk_size = arg_dict['chunk_size']
-    kernel_size = arg_dict['kernel_size']
+    radius = arg_dict['radius']
     method = arg_dict['method']
     overlap = arg_dict['chunk_overlap']
     num_threads = arg_dict['proc']
