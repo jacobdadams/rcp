@@ -171,10 +171,15 @@ def blur_gauss(in_array, sigma, radius=30):
     # build kernel (Gaussian blur function)
     # g is a 2d gaussian distribution of size (2*size) + 1
     x, y = np.mgrid[-radius:radius + 1, -radius:radius + 1]
+
+    # Mike Toews' method, not full gaussian but still good:
     # g = np.exp(-(x**2 / float(radius) + y**2 / float(radius)))
     # g = (g / g.sum()).astype(nan_array.dtype)
+
+    # Proper guassian distribution
     twosig = 2 * sigma**2
     g = np.exp(-(x**2 / twosig + y**2 / twosig)) / (twosig * math.pi)
+    #g = 1 - g
     # Convolve the data and Gaussian function (do the Gaussian blur)
     # Supressing runtime warnings due to NaNs (they just get hidden by NoData
     # masks in the supper_array rebuild anyways)
@@ -182,6 +187,32 @@ def blur_gauss(in_array, sigma, radius=30):
         warnings.simplefilter("ignore", category=RuntimeWarning)
         # Use the astropy function because fftconvolve does not like np.nan
         #smoothed = fftconvolve(padded_array, g, mode="valid")
+        smoothed = convolve_fft(nan_array, g, nan_treatment='interpolate')
+
+    return smoothed
+
+
+def blur_toews(in_array, radius):
+    '''
+    Performs a blur on an array of elevations based on convolution kernel from
+    Mike Toews, https://gis.stackexchange.com/questions/9431/what-raster-smoothing-generalization-tools-are-available
+    in_array:       The input array, should be read using the supper_array
+                    technique from below.
+    radius:         The radius (in grid cells) of the blur kernel
+    '''
+
+    # Create new array with s_nodata values set to np.nan (for edges of raster)
+    nan_array = np.where(in_array == s_nodata, np.nan, in_array)
+
+    # build kernel
+    x, y = np.mgrid[-radius:radius + 1, -radius:radius + 1]
+    g = np.exp(-(x**2 / float(radius) + y**2 / float(radius)))
+    g = (g / g.sum()).astype(nan_array.dtype)
+
+    # Supressing runtime warnings due to NaNs (they just get hidden by NoData
+    # masks in the supper_array rebuild anyways)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
         smoothed = convolve_fft(nan_array, g, nan_treatment='interpolate')
 
     return smoothed
@@ -535,6 +566,10 @@ def ProcessSuperArray(chunk_info):
         # Do something with the data
         if method == "blur_gauss":
             new_data = blur_gauss(super_array, options["sigma"], options["radius"])
+        elif method == "blur_mean":
+            new_data = blur_mean(super_array, options["radius"])
+        elif method == "blur_toews":
+            new_data = blur_toews(super_array, options["radius"])
         elif method == "mdenoise":
             new_data = mdenoise(super_array, options["t"],
                                 options["n"], options["v"], tile)
@@ -545,8 +580,6 @@ def ProcessSuperArray(chunk_info):
             new_data *= 255.0  # scale CLAHE from 0-1 to 0-255
         elif method == "TPI":
             new_data = TPI(super_array, options["radius"])
-        elif method == "blur_mean":
-            new_data = blur_mean(super_array, options["radius"])
         elif method == "hillshade":
             new_data = hillshade(super_array, options["az"], options["alt"])
         elif method == "skymodel":
@@ -656,6 +689,22 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         if overlap < 2 * options["radius"]:
             overlap = 2 * options["radius"]
 
+    elif method == "blur_mean":
+        mean_opts = ["radius"]
+        for opt in mean_opts:
+            if opt not in options or not options[opt]:
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
+        if overlap < 2 * options["radius"]:
+            overlap = 2 * options["radius"]
+
+    elif method == "blur_toews":
+        mean_opts = ["radius"]
+        for opt in mean_opts:
+            if opt not in options or not options[opt]:
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
+        if overlap < 2 * options["radius"]:
+            overlap = 2 * options["radius"]
+
     elif method == "mdenoise":
         mdenoise_opts = ["t", "n", "v"]
         for opt in mdenoise_opts:
@@ -673,14 +722,6 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     elif method == "TPI":
         TPI_opts = ["radius"]
         for opt in TPI_opts:
-            if opt not in options or not options[opt]:
-                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
-        if overlap < 2 * options["radius"]:
-            overlap = 2 * options["radius"]
-
-    elif method == "blur_mean":
-        mean_opts = ["radius"]
-        for opt in mean_opts:
             if opt not in options or not options[opt]:
                 raise ValueError("Required option {} not provided for method {}.".format(opt, method))
         if overlap < 2 * options["radius"]:
@@ -932,8 +973,9 @@ if "__main__" in __name__:
     args = argparse.ArgumentParser(usage='%(prog)s -m method [general options] [method specific options] infile outfile', description='Effectively divides arbitrarily large DEM rasters into chunks that will fit in memory and runs the specified processing method on each chunk, with parallel processing of the chunks available for significant runtime advantages. Current methods include smoothing algorithms (blur_mean, blur_gauss, and Sun et al\'s mdenoise), CLAHE contrast stretching, TPI, and Kennelly & Stewart\'s skymodel hillshade algorithm.')
     all = args.add_argument_group('all', 'General options for all methods')
     all.add_argument('-m', dest='method',
-                     choices=['blur_mean', 'blur_gauss', 'mdenoise',
-                              'hillshade', 'skymodel', 'clahe', 'TPI'],
+                     choices=['blur_mean', 'blur_gauss', 'blur_toews',
+                              'mdenoise', 'hillshade', 'skymodel', 'clahe',
+                              'TPI'],
                      help='Processing method')
     all.add_argument('-o', dest='chunk_overlap', required=True, type=int,
                      help='Chunk overlap size in pixels; try 25. Will be changed to 2*kernel size if less than 2*kernel size for relevant methods.')
@@ -948,7 +990,7 @@ if "__main__" in __name__:
     kernel_args.add_argument('-r', dest='radius',
                              type=int, help='Kernel radius in pixels; try 15')
 
-    blur_gauss_args = args.add_argument_group('blur_gauss', 'Gaussian blur options; also requires -k')
+    blur_gauss_args = args.add_argument_group('blur_gauss', 'Gaussian blur options; also requires -r')
     blur_gauss_args.add_argument('-d', dest='sigma', type=int, help='Standard deviation of the distribution (sigma). Controls amount of smoothing; try 1.')
 
     mdenoise_args = args.add_argument_group('mdenoise', 'Mesh Denoise (Sun et al, 2007) smoothing algorithm options')
