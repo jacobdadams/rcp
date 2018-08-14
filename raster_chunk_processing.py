@@ -418,6 +418,15 @@ def TPI(in_array, radius):
                     to account for the subject pixel)
     '''
 
+    # Annulus (donut) kernel, for future advanced TPI calculations
+    # i_radius = radius/2
+    # o_mask = x**2 + y**2 > radius**2
+    # i_mask = x**2 + y**2 < i_radius**2
+    # mask = np.logical_or(o_mask, i_mask)
+    # valid_entries = mask.size - np.count_nonzero(mask)
+    # kernel = np.ones((diameter, diameter)) / (valid_entries)
+    # kernel[mask] = 0
+
     # Use the blur_mean method to calculate average of neighbors
     circular_mean = blur_mean(in_array, radius)
     return in_array - circular_mean
