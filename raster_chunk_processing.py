@@ -131,6 +131,7 @@ def blur_mean(in_array, radius):
     kernel = np.ones((diameter, diameter)) / (valid_entries)
     # Mask away the non-circular areas
     kernel[mask] = 0
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
         circular_mean = convolve_fft(nan_array, kernel,
@@ -171,12 +172,7 @@ def blur_gauss(in_array, sigma, radius=30):
     # build kernel (Gaussian blur function)
     # g is a 2d gaussian distribution of size (2*size) + 1
     x, y = np.mgrid[-radius:radius + 1, -radius:radius + 1]
-
-    # Mike Toews' method, not full gaussian but still good:
-    # g = np.exp(-(x**2 / float(radius) + y**2 / float(radius)))
-    # g = (g / g.sum()).astype(nan_array.dtype)
-
-    # Proper guassian distribution
+    # Gaussian distribution
     twosig = 2 * sigma**2
     g = np.exp(-(x**2 / twosig + y**2 / twosig)) / (twosig * math.pi)
     #g = 1 - g
@@ -188,6 +184,8 @@ def blur_gauss(in_array, sigma, radius=30):
         # Use the astropy function because fftconvolve does not like np.nan
         #smoothed = fftconvolve(padded_array, g, mode="valid")
         smoothed = convolve_fft(nan_array, g, nan_treatment='interpolate')
+        # Uncomment the following line for a high-pass filter
+        #smoothed = nan_array - smoothed
 
     return smoothed
 
@@ -208,13 +206,15 @@ def blur_toews(in_array, radius):
     x, y = np.mgrid[-radius:radius + 1, -radius:radius + 1]
     g = np.exp(-(x**2 / float(radius) + y**2 / float(radius)))
     g = (g / g.sum()).astype(nan_array.dtype)
+    #g = 1 - g
 
     # Supressing runtime warnings due to NaNs (they just get hidden by NoData
     # masks in the supper_array rebuild anyways)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
         smoothed = convolve_fft(nan_array, g, nan_treatment='interpolate')
-
+        # Uncomment the following line for a high-pass filter
+        #smoothed = nan_array - smoothed
     return smoothed
 
 
@@ -291,7 +291,7 @@ def mdenoise(in_array, t, n, v, tile=None):
         os.remove(temp_s_path)
         os.remove(temp_t_path)
 
-    return(mdenoised_array)
+    return mdenoised_array
 
 
 def hillshade(in_array, az, alt, scale=False):
@@ -406,7 +406,8 @@ def skymodel(in_array, lum_lines):
 def TPI(in_array, radius):
     '''
     Returns an array of the Topographic Position Index of each cell (the
-    difference between the cell and the average of its neighbors).
+    difference between the cell and the average of its neighbors). AKA, a
+    high-pass mean filter.
     in_array:       The input array, should be read using the supper_array
                     technique from below.
     radius:         The radius, in cells, of the neighborhood used for the
@@ -743,6 +744,18 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     else:
         raise NotImplementedError("Method not recognized: {}".format(method))
 
+    # If we're doing a skymodel, we need to read in the whole luminance file
+    # and add that list to the options dictionary
+    if method == "skymodel":
+        if verbose:
+            print("Reading in luminance file {}".format(options["lum_file"]))
+        lines = []
+        with open(options["lum_file"], 'r') as l:
+            reader = csv.reader(l)
+            for line in reader:
+                lines.append(line)
+        options["lum_lines"] = lines
+
     gdal.UseExceptions()
 
     # Get source file metadata (dimensions, driver, proj, cell size, nodata)
@@ -821,18 +834,6 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     # Close target file handle (causes entire file to be written to disk)
     t_band = None
     t_fh = None
-
-    # If we're doing a skymodel, we need to read in the whole luminance file
-    # and add that list to the options dictionary
-    if method == "skymodel":
-        if verbose:
-            print("Reading in luminance file {}".format(options["lum_file"]))
-        lines = []
-        with open(options["lum_file"], 'r') as l:
-            reader = csv.reader(l)
-            for line in reader:
-                lines.append(line)
-        options["lum_lines"] = lines
 
     # We could probably code up an automatic chunk_size setter based on
     # data type and system memory limits
