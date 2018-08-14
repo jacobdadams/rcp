@@ -30,6 +30,9 @@
 # THE SOFTWARE.
 #*****************************************************************************
 
+# Version:  1.0.0
+# Date      14 Aug 2018
+
 import numpy as np
 import datetime
 import os
