@@ -135,10 +135,14 @@ def blur_mean(in_array, radius):
     # Mask away the non-circular areas
     kernel[mask] = 0
 
+    # kernel = [[4.5, 0, 0],
+    #           [0, 0.001, 0],
+    #           [0, 0, -5]]
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
         circular_mean = convolve_fft(nan_array, kernel,
-                                     nan_treatment='interpolate')
+                                     nan_treatment='interpolate')#, normalize_kernel=False)
 
     return circular_mean
 
@@ -177,8 +181,11 @@ def blur_gauss(in_array, sigma, radius=30):
     x, y = np.mgrid[-radius:radius + 1, -radius:radius + 1]
     # Gaussian distribution
     twosig = 2 * sigma**2
-    g = np.exp(-(x**2 / twosig + y**2 / twosig)) / (twosig * math.pi)
-    #g = 1 - g
+    #g = np.exp(-(x**2 / twosig + y**2 / twosig)) / (twosig * math.pi)
+    #LoG
+    g = (-1/(math.pi*sigma**4))*(1-(x**2 + y**2)/twosig)*np.exp(-(x**2 / twosig + y**2 / twosig)) / (twosig)
+
+    g = 1 - g
     # Convolve the data and Gaussian function (do the Gaussian blur)
     # Supressing runtime warnings due to NaNs (they just get hidden by NoData
     # masks in the supper_array rebuild anyways)
@@ -186,7 +193,7 @@ def blur_gauss(in_array, sigma, radius=30):
         warnings.simplefilter("ignore", category=RuntimeWarning)
         # Use the astropy function because fftconvolve does not like np.nan
         #smoothed = fftconvolve(padded_array, g, mode="valid")
-        smoothed = convolve_fft(nan_array, g, nan_treatment='interpolate')
+        smoothed = convolve_fft(nan_array, g, nan_treatment='interpolate', normalize_kernel=False)
         # Uncomment the following line for a high-pass filter
         #smoothed = nan_array - smoothed
 
@@ -1004,7 +1011,7 @@ if "__main__" in __name__:
                              type=int, help='Kernel radius in pixels; try 15')
 
     blur_gauss_args = args.add_argument_group('blur_gauss', 'Gaussian blur options; also requires -r')
-    blur_gauss_args.add_argument('-d', dest='sigma', type=int, help='Standard deviation of the distribution (sigma). Controls amount of smoothing; try 1.')
+    blur_gauss_args.add_argument('-d', dest='sigma', type=float, help='Standard deviation of the distribution (sigma). Controls amount of smoothing; try 1.')
 
     mdenoise_args = args.add_argument_group('mdenoise', 'Mesh Denoise (Sun et al, 2007) smoothing algorithm options')
     mdenoise_args.add_argument('-n', dest='n', type=int,
