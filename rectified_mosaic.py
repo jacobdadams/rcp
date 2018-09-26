@@ -430,7 +430,7 @@ def ReadChunkFromShapefile(shp_path):
 
 
 if "__main__" in __name__:
-    directory = r'e:\a_imagery\1981\rectified'
+    directory = r'e:\a_imagery\1981\1_rectified'
     poly_shp = r'e:\a_imagery\1981\00fishnet.shp'
     tile_dir = r'e:\a_imagery\1981\tiled'
     csv_path = r'e:\a_imagery\1981\00cells.csv'
