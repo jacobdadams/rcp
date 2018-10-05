@@ -1024,7 +1024,7 @@ if "__main__" in __name__:
     clahe_args = args.add_argument_group('clahe', 'Contrast Limited Adaptive Histogram Equalization (CLAHE) options')
     clahe_args.add_argument('-c', dest='clip_limit', type=float,
                             help='Clipping limit. Try 0.01; higher values give more contrast')
-    kernel_args.add_argument('-k', dest='kernel_size',
+    clahe_args.add_argument('-k', dest='kernel_size',
                              type=int, help='Kernel size in pixels; try 30')
 
     hs_args = args.add_argument_group('hs', 'Hillshade options')
