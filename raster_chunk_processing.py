@@ -30,21 +30,24 @@
 # THE SOFTWARE.
 #*****************************************************************************
 
+# Version:  1.0.0
+# Date      14 Aug 2018
+
 import numpy as np
 import datetime
 import os
-import math
 import subprocess
 import contextlib
 import tempfile
 import warnings
 import csv
+import argparse
+import traceback
+import math
 import multiprocessing as mp
-#from scipy.signal import fftconvolve
 from astropy.convolution import convolve_fft
 from skimage import exposure
-from osgeo import gdal
-from scipy.ndimage.filters import generic_filter as gf
+from osgeo import gdal, gdal_array
 
 
 # Just a simple class to hold the information about each chunk
@@ -57,7 +60,7 @@ def sizeof_fmt(num, suffix='B'):
     Quick-and-dirty method for formating file size, from Sridhar Ratnakumar,
     https://stackoverflow.com/questions/1094841/reusable-library-to-get-human-readable-version-of-file-size.
     '''
-    for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
+    for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
         if abs(num) < 1024.0:
             return "%3.1f %s%s" % (num, unit, suffix)
         num /= 1024.0
@@ -80,12 +83,12 @@ def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
 
     rows = in_array.shape[0]
     cols = in_array.shape[1]
-    ncols = "ncols %d\n" %cols
-    nrows = "nrows %d\n" %rows
-    xllcorner = "xllcorner %f\n" %xll
-    yllcorner = "yllcorner %f\n" %yll
-    cellsize = "cellsize %f\n" %c_size
-    nodata_value = "nodata_value %f\n" %nodata
+    ncols = "ncols {}\n".format(cols)
+    nrows = "nrows {}\n".format(rows)
+    xllcorner = "xllcorner {}\n".format(xll)
+    yllcorner = "yllcorner {}\n".format(yll)
+    cellsize = "cellsize {}\n".format(c_size)
+    nodata_value = "nodata_value {}\n".format(nodata)
 
     with open(asc_path, 'w') as f:
         # Write Header
@@ -103,37 +106,54 @@ def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
             f.write("\n")
 
 
-def blur_mean(in_array, filter_size):
+def blur_mean(in_array, radius):
     '''
     Performs a simple blur based on the average of nearby values. Uses circular
-    mask from Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-arrayself.
-    This is the equivalent of ArcGIS' Focal Mean Statistics raster processing
-    tool.
+    mask from Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-array
+    This is the equivalent of ArcGIS' Focal Statistics (Mean) raster processing
+    tool using a circular neighborhood.
     in_array:       The input array, should be read using the supper_array
                     technique from below.
-    filter_size:    The diameter (in grid cells) of the circle used to define
+    radius:         The radius (in grid cells) of the circle used to define
                     nearby pixels. A larger value creates more pronounced
-                    smoothing.
+                    smoothing. The diameter of the circle becomes 2*radius + 1,
+                    to account for the subject pixel.
     '''
 
-    # Using circular mask from user Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-array
-    radius = math.floor(filter_size/2)
-    kernel = np.zeros((2*radius+1, 2*radius+1))
-    y,x = np.ogrid[-radius:radius+1, -radius:radius+1]
-    mask = x**2 + y**2 <= radius**2
-    kernel[mask] = 1
-    circular_mean = gf(in_array, np.mean, footprint=kernel)
+    # Using modified circular mask from user Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-array
+    # Using convolve_fft instead of gf(np.mean), which massively speeds up
+    # execution (from ~3 hours to ~5 minutes on one dataset).
+    nan_array = np.where(in_array == s_nodata, np.nan, in_array)
+    diameter = 2 * radius + 1
+    # Create a circular mask
+    y, x = np.ogrid[-radius:radius + 1, -radius:radius + 1]
+    mask = x**2 + y**2 > radius**2
+    # Determine number of Falses (ie, cells in kernel not masked out)
+    valid_entries = mask.size - np.count_nonzero(mask)
+    # Create a kernel of 1/(the number of valid entries after masking)
+    kernel = np.ones((diameter, diameter)) / (valid_entries)
+    # Mask away the non-circular areas
+    kernel[mask] = 0
+
+    # kernel = [[4.5, 0, 0],
+    #           [0, 0.001, 0],
+    #           [0, 0, -5]]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        circular_mean = convolve_fft(nan_array, kernel,
+                                     nan_treatment='interpolate')#, normalize_kernel=False)
 
     return circular_mean
 
 
-def blur_gauss(in_array, size):
+def blur_gauss(in_array, sigma, radius=30):
     '''
-    Performs a guassian blur on an array of elevations. Modified from Mike
-    Toews, https://gis.stackexchange.com/questions/9431/what-raster-smoothing-generalization-tools-are-availableself.
+    Performs a gaussian blur on an array of elevations. Modified from Mike
+    Toews, https://gis.stackexchange.com/questions/9431/what-raster-smoothing-generalization-tools-are-available
     in_array:       The input array, should be read using the supper_array
                     technique from below.
-    size:           The size (in grid cells) of the gaussian blur kernel
+    radius:         The radius (in grid cells) of the gaussian blur kernel
     '''
 
     # This comment block is old and left here for posterity
@@ -148,24 +168,63 @@ def blur_gauss(in_array, size):
     # cleaned_array = np.copy(in_array)
     # np.putmask(cleaned_array, cleaned_array==s_nodata, array_mean)
 
+    # convolving: output pixel is the sum of the multiplication of each value
+    # covered by the kernel with the associated kernel value (the kernel is a
+    # set size/shape and each position has a value, which is the multiplication
+    # factor used in the convolution).
+
     # Create new array with s_nodata values set to np.nan (for edges of raster)
     nan_array = np.where(in_array == s_nodata, np.nan, in_array)
 
-    # expand cleaned_array to fit edge of kernel
-    #padded_array = np.pad(nan_array, size, 'symmetric')
     # build kernel (Gaussian blur function)
-    x, y = np.mgrid[-size:size + 1, -size:size + 1]
-    g = np.exp(-(x**2 / float(size) + y**2 / float(size)))
-    g = (g / g.sum()).astype(nan_array.dtype)
+    # g is a 2d gaussian distribution of size (2*size) + 1
+    x, y = np.mgrid[-radius:radius + 1, -radius:radius + 1]
+    # Gaussian distribution
+    twosig = 2 * sigma**2
+    #g = np.exp(-(x**2 / twosig + y**2 / twosig)) / (twosig * math.pi)
+    #LoG
+    g = (-1/(math.pi*sigma**4))*(1-(x**2 + y**2)/twosig)*np.exp(-(x**2 / twosig + y**2 / twosig)) / (twosig)
+
+    g = 1 - g
     # Convolve the data and Gaussian function (do the Gaussian blur)
-    #smoothed = fftconvolve(padded_array, g, mode="valid")
     # Supressing runtime warnings due to NaNs (they just get hidden by NoData
     # masks in the supper_array rebuild anyways)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
         # Use the astropy function because fftconvolve does not like np.nan
-        smoothed = convolve_fft(nan_array, g, nan_treatment='interpolate')
+        #smoothed = fftconvolve(padded_array, g, mode="valid")
+        smoothed = convolve_fft(nan_array, g, nan_treatment='interpolate', normalize_kernel=False)
+        # Uncomment the following line for a high-pass filter
+        #smoothed = nan_array - smoothed
 
+    return smoothed
+
+
+def blur_toews(in_array, radius):
+    '''
+    Performs a blur on an array of elevations based on convolution kernel from
+    Mike Toews, https://gis.stackexchange.com/questions/9431/what-raster-smoothing-generalization-tools-are-available
+    in_array:       The input array, should be read using the supper_array
+                    technique from below.
+    radius:         The radius (in grid cells) of the blur kernel
+    '''
+
+    # Create new array with s_nodata values set to np.nan (for edges of raster)
+    nan_array = np.where(in_array == s_nodata, np.nan, in_array)
+
+    # build kernel
+    x, y = np.mgrid[-radius:radius + 1, -radius:radius + 1]
+    g = np.exp(-(x**2 / float(radius) + y**2 / float(radius)))
+    g = (g / g.sum()).astype(nan_array.dtype)
+    #g = 1 - g
+
+    # Supressing runtime warnings due to NaNs (they just get hidden by NoData
+    # masks in the supper_array rebuild anyways)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        smoothed = convolve_fft(nan_array, g, nan_treatment='interpolate')
+        # Uncomment the following line for a high-pass filter
+        #smoothed = nan_array - smoothed
     return smoothed
 
 
@@ -191,16 +250,15 @@ def mdenoise(in_array, t, n, v, tile=None):
     # array of window + 4 * filter). Recompiling mdenoise from source on a
     # 64-bit platform may solve this.
 
-    # Should rewrite to use tempfile.gettempdir() to get the directory rather
-    # than using a user-specified dir
-    # (Or really could just bite the bullet and rewrite/link mdenoise into
-    # python so that we can just pass the np.array directly)
+    # Really should just bite the bullet and rewrite/link mdenoise into
+    # python so that we can just pass the np.array directly. May run into some
+    # licensing restrictions by linking, as mdenoise is GPL.
 
     # Nodata Masking:
     # nd values get passed to mdenoise via array
     # Return array has nd values mostly intact except for some weird burrs that
-    # need to be trimmed for sake of contours (done in smooth() by copying over
-    # nodata values as mask, not in here)
+    # need to be trimmed for sake of contours (done in ProcessSuperArray() by
+    # copying over nodata values as mask, not in here)
 
     # Should be multiprocessing safe; source and target files identified with
     # pid or tile in the file name, no need for locking.
@@ -243,12 +301,24 @@ def mdenoise(in_array, t, n, v, tile=None):
         os.remove(temp_s_path)
         os.remove(temp_t_path)
 
-    return(mdenoised_array)
+    return mdenoised_array
 
 
-def hillshade(in_array, az, alt, scale=True):
+def hillshade(in_array, az, alt, scale=False):
+    '''
+    Custom implmentation of hillshading, using the algorithm from the source
+    code for gdaldem. The inputs and outputs are the same as in gdal or ArcGIS.
+    in_array:       The input array, should be read using the supper_array
+                    technique from below.
+    az:             The sun's azimuth, in degrees.
+    alt:            The sun's altitude, in degrees.
+    scale:          When true, stretches the result to 1-255. CAUTION: If using
+                    as part of a parallel or multi-chunk process, each chunk
+                    has different min and max values, which leads to different
+                    stretching for each chunk.
+    '''
 
-    # Create new array with s_nodata values set to np.nan (for edges of raster)
+    # Create new array wsith s_nodata values set to np.nan (for edges)
     nan_array = np.where(in_array == s_nodata, np.nan, in_array)
 
     x = np.zeros(nan_array.shape)
@@ -266,13 +336,15 @@ def hillshade(in_array, az, alt, scale=True):
     cosaz = np.cos(azrad)
     cosalt = np.cos(altrad)
     sinaz = np.sin(azrad)
-    xx_plus_yy = x*x + y*y
-    shaded = (sinalt - (y * cosaz * cosalt - x * sinaz * cosalt)) / np.sqrt(1+xx_plus_yy)
+    xx_plus_yy = x * x + y * y
+    alpha = y * cosaz * cosalt - x * sinaz * cosalt
+    shaded = (sinalt - alpha) / np.sqrt(1 + xx_plus_yy)
 
+    # scale from 0-1 to 0-255
     shaded255 = shaded * 255
 
     if scale:
-        # Scale to 1-255
+        # Scale to 1-255 (stretches min value to 1, max to 255)
         # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
         # Supressing runtime warnings due to NaNs (they just get hidden by
         # NoData masks in the supper_array rebuild anyways)
@@ -291,6 +363,17 @@ def hillshade(in_array, az, alt, scale=True):
 
 
 def skymodel(in_array, lum_lines):
+    '''
+    Creates a unique hillshade based on a skymodel, implmenting the method
+    defined in Kennelly and Steward (2014), A Uniform Sky Illumination Model to
+    Enhance Shading of Terrain and Urban Areas.
+
+    in_array:       The input array, should be read using the supper_array
+                    technique from below.
+    lum_lines:      The azimuth, altitude, and weight for each iteration of the
+                    hillshade. Stored as an array lines, with each line being
+                    an array of [az, alt, weight].
+    '''
 
     # initialize skyshade as 0's
     skyshade = np.zeros((in_array.shape))
@@ -310,57 +393,50 @@ def skymodel(in_array, lum_lines):
         skyshade = skyshade + shade
         shade = None
 
-    # return skyshade
+    return skyshade
+
+    # --- SCALING DOESN'T WORK- The min/max for each chunk are different.
+    # --- We'd need to scale after the entire thing is finished.
     # Scale to 1-255
     # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
     # Supressing runtime warnings due to NaNs (they just get hidden by NoData
     # masks in the supper_array rebuild anyways)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)
-        newmax = 255
-        newmin = 1
-        oldmax = np.nanmax(skyshade)
-        oldmin = np.nanmin(skyshade)
+    # with warnings.catch_warnings():
+    #     warnings.simplefilter("ignore", category=RuntimeWarning)
+    #     newmax = 255
+    #     newmin = 1
+    #     oldmax = np.nanmax(skyshade)
+    #     oldmin = np.nanmin(skyshade)
+    #
+    # scaled = (newmax - newmin)*(skyshade - oldmin) / (oldmax - oldmin) + newmin
+    #
+    # return scaled
 
-    scaled = (newmax - newmin)*(skyshade - oldmin) / (oldmax - oldmin) + newmin
 
-    return scaled
-
-
-def TPI(in_array, filter_size):
+def TPI(in_array, radius):
     '''
     Returns an array of the Topographic Position Index of each cell (the
-    difference between the cell and the average of its neighbors).
+    difference between the cell and the average of its neighbors). AKA, a
+    high-pass mean filter.
     in_array:       The input array, should be read using the supper_array
                     technique from below.
-    filter_size:    The size, in cells, of the neighborhood used for the average
-                    (uses a circular window)
+    radius:         The radius, in cells, of the neighborhood used for the
+                    average (uses a circular window of diameter 2 * radius + 1
+                    to account for the subject pixel)
     '''
 
-    # Change all NoData values to mean of valid values to fix issues with
-    # massive (float32.max) NoData values completely overwhelming other array
-    # data. Using mean instead of 0 gives a little bit more usable data on
-    # edges.
-    # This gets us 80% of the way there. For even better, we could use a mask
-    # and replace nodata with the average pixel value of all pixels within
-    # a 100-pixel radius, which would give a more area-appropriate mean value
-    # as elevation is usually spatially autocorrelated.
-    # Or just use np.nan
+    # Annulus (donut) kernel, for future advanced TPI calculations
+    # i_radius = radius/2
+    # o_mask = x**2 + y**2 > radius**2
+    # i_mask = x**2 + y**2 < i_radius**2
+    # mask = np.logical_or(o_mask, i_mask)
+    # valid_entries = mask.size - np.count_nonzero(mask)
+    # kernel = np.ones((diameter, diameter)) / (valid_entries)
+    # kernel[mask] = 0
 
-    # Create new array with s_nodata values set to np.nan (for edges of raster)
-    nan_array = np.where(in_array == s_nodata, np.nan, in_array)
-
-    # Using circular mask from user Inigo Hernaez Corres, https://stackoverflow.com/questions/8647024/how-to-apply-a-disc-shaped-mask-to-a-numpy-array
-    radius = math.floor(filter_size/2)
-    kernel = np.zeros((2*radius+1, 2*radius+1))
-    y,x = np.ogrid[-radius:radius+1, -radius:radius+1]
-    mask = x**2 + y**2 <= radius**2  # pythagorean theorem check for circle
-    kernel[mask] = 1  # Creates circle mask in kernel using indexes from ogrid
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)
-        circular_mean = gf(nan_array, np.nanmean, footprint=kernel)
-
-    return nan_array - circular_mean
+    # Use the blur_mean method to calculate average of neighbors
+    circular_mean = blur_mean(in_array, radius)
+    return in_array - circular_mean
 
 
 def ProcessSuperArray(chunk_info):
@@ -371,7 +447,11 @@ def ProcessSuperArray(chunk_info):
     in each dimension (-x, x, -y, y). It automatically computes edge conditions
     for chunks on the edges of the original raster. It then calls the specified
     method on this super array, masks out the overlap areas on the resulting
-    array, and writes the processed chunk to the output file.
+    array (if nodata is set), and writes the processed chunk to the output
+    file.
+
+    Relies on having a global lock object, normally passed through mp.pool()
+    with a simple initializer function.
 
     chunk_info:     A simple Chunk() data structure obejct that holds the
                     information about the chunk and the file as a whole.
@@ -397,6 +477,8 @@ def ProcessSuperArray(chunk_info):
 
     rows = chunk_info.rows
     cols = chunk_info.cols
+
+    bands = chunk_info.bands
 
     method = chunk_info.method
     options = chunk_info.options  # dictionary of options
@@ -441,123 +523,129 @@ def ProcessSuperArray(chunk_info):
     #   Adjust x/y offset to appropriate place (for < 0 cases only).
     #   Reduce read size by f2 (we're not reading that edge area on one side)
     #   Move start or end value for super_array slice by f2
-    # Each of x/y can only be under (start of row/col) or over (end of row/col)
-    #   ie, the input raster must be broken into at least two chunks in each
-    #   direction
     # Checks both x and y, setting read and slice values for each dimension if
     # needed
     if x_off < 0:
         read_x_off = 0
-        read_x_size = x_size - f2
+        read_x_size -= f2
         sa_x_start = f2
-    elif x_off + x_size > cols:
-        read_x_size = x_size - f2
-        sa_x_end = -1 * f2
+    if x_off + x_size > cols:
+        read_x_size -= f2
+        sa_x_end = -f2
 
     if y_off < 0:
         read_y_off = 0
-        read_y_size = y_size - f2
+        read_y_size -= f2
         sa_y_start = f2
-    elif y_off + y_size > rows:
-        read_y_size = y_size - f2
-        sa_y_end = -1 * f2
+    if y_off + y_size > rows:
+        read_y_size -= f2
+        sa_y_end = -f2
 
     percent = (progress / total_chunks) * 100
     elapsed = datetime.datetime.now() - starttime
     if verbose:
-        print("Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4} Indices: [{5}:{6}, {7}:{8}] PID: {9}".format(tile,
-                                                                progress, total_chunks,
-                                                                percent, elapsed, read_y_off,read_y_off + read_y_size, read_x_off, read_x_off + read_y_size, mp.current_process().pid))
+        print("Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4} Indices: [{5}:{6}, {7}:{8}] PID: {9}".format(tile, progress, total_chunks, percent, elapsed, read_y_off, read_y_off + read_y_size, read_x_off, read_x_off + read_x_size, mp.current_process().pid))
     else:
-        print("Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4}".format(tile,
-                                                        progress, total_chunks,
-                                                        percent, elapsed))
+        print("Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4}".format(tile, progress, total_chunks, percent, elapsed))
 
-    # We perform the read calls within the multiprocessing portion to avoid
-    # passing the entire raster to each process. This means we need to acquire
-    # a lock prior to reading in the chunk so that we're not trying to read
-    # the file at the same time.
-    with lock:
-        # ===== LOCK HERE =====
-        # Open source file handle
-        # print("Opening {0:s}...".format(in_dem_path))
-        s_fh = gdal.Open(source_dem_path, gdal.GA_ReadOnly)
+    for band in range(1, bands + 1):
+        # We perform the read calls within the multiprocessing portion to avoid
+        # passing the entire raster to each process. This means we need to
+        # acquire a lock prior to reading in the chunk so that we're not trying
+        # to read the file at the same time.
+        with lock:
+            # ===== LOCK HERE =====
+            # Open source file handle
+            s_fh = gdal.Open(source_dem_path, gdal.GA_ReadOnly)
+            s_band = s_fh.GetRasterBand(band)
 
-        # Master read call. read_ variables have been changed for edge cases
-        # if needed
-        read_array = s_fh.ReadAsArray(read_x_off, read_y_off,
-                                      read_x_size, read_y_size)
-        # Arrays are of form [rows, cols], thus [y, x] when slicing
+            # Master read call. read_ variables have been changed for edge
+            # cases if needed
+            read_array = s_band.ReadAsArray(read_x_off, read_y_off,
+                                            read_x_size, read_y_size)
+            # Arrays are of form [rows, cols], thus [y, x] when slicing
 
-        s_fh = None
-        # ===== UNLOCK HERE =====
+            s_band = None
+            s_fh = None
+            # ===== UNLOCK HERE =====
 
-    # Array holding superset of actual desired window, initialized to NoData
-    # value.
-    # Edge case logic insures edges fill appropriate portion when loaded in
-    # super_array must be of type float for fftconvolve
-    super_array = np.full((y_size, x_size), s_nodata)
+        # Array holding superset of actual desired window, initialized to
+        # NoData value if present, 0 otherwise.
+        # Edge case logic insures edges fill appropriate portion when loaded in
+        # super_array must be of type float for fftconvolve
+        if s_nodata or s_nodata == 0:
+            super_array = np.full((y_size, x_size), s_nodata)
+        else:
+            super_array = np.full((y_size, x_size), 0)
 
-    # The cells of our NoData-intiliazed super_array corresponding to the
-    # read_array are replaced with data from read_array. This changes every
-    # value, except for edge cases that leave portions of the super_array
-    # as NoData.
-    # if verbose:
-    #     print("Tile {} indices: [{}:{}, {}:{}]".format(tile, read_y_off,
-    #                                                  read_y_off + read_y_size,
-    #                                                  read_x_off,
-    #                                                  read_x_off + read_y_size))
-        #print("Tile {} PID: {}".format(tile, mp.current_process().pid))
-    super_array[sa_y_start:sa_y_end, sa_x_start:sa_x_end] = read_array
+        # The cells of our NoData-intiliazed super_array corresponding to the
+        # read_array are replaced with data from read_array. This changes every
+        # value, except for edge cases that leave portions of the super_array
+        # as NoData.
+        super_array[sa_y_start:sa_y_end, sa_x_start:sa_x_end] = read_array
+        # Do something with the data
+        if method == "blur_gauss":
+            new_data = blur_gauss(super_array, options["sigma"], options["radius"])
+        elif method == "blur_mean":
+            new_data = blur_mean(super_array, options["radius"])
+        elif method == "blur_toews":
+            new_data = blur_toews(super_array, options["radius"])
+        elif method == "mdenoise":
+            new_data = mdenoise(super_array, options["t"],
+                                options["n"], options["v"], tile)
+        elif method == "clahe":
+            new_data = exposure.equalize_adapthist(super_array.astype(int),
+                                                   options["kernel_size"],
+                                                   options["clip_limit"])
+            new_data *= 255.0  # scale CLAHE from 0-1 to 0-255
+        elif method == "TPI":
+            new_data = TPI(super_array, options["radius"])
+        elif method == "hillshade":
+            new_data = hillshade(super_array, options["az"], options["alt"])
+        elif method == "skymodel":
+            new_data = skymodel(super_array, options["lum_lines"])
+        elif method == "test":
+            new_data = super_array + 5
+        else:
+            raise NotImplementedError("Method not implemented: {}".format(
+                method))
 
-    # Do something with the data
-    if method == "blur_gauss":
-        new_data = blur_gauss(super_array, options["filter_size"])
-    elif method == "mdenoise":
-        new_data = mdenoise(super_array, options["t"],
-                            options["n"], options["v"], tile)
-    elif method == "clahe":
-        new_data = exposure.equalize_adapthist(super_array.astype(int),
-                                               options["filter_size"],
-                                               options["clip_limit"])
-    elif method == "TPI":
-        new_data = TPI(super_array, options["filter_size"])
-    elif method == "blur_mean":
-        new_data = blur_mean(super_array, options["filter_size"])
-    elif method == "hillshade":
-        new_data = hillshade(super_array, options["az"], options["alt"])
-    elif method == "skymodel":
-        new_data = skymodel(super_array, options["lum_lines"])
-    else:
-        raise NotImplementedError("Method not implemented: %s" %method)
+        # Resulting array is a superset of the data; we need to strip off the
+        # overlap before writing it
+        if f2 > 0:
+            temp_array = new_data[f2:-f2, f2:-f2]
+        else:
+            temp_array = new_data
+        # If nodata in source, make sure nodata areas are transferred back
+        if s_nodata is not None:
+            # slice down super_array to get original chunk of data (ie,
+            # super_array minus additional data on edges) to use for finding
+            # NoData areas
+            if f2 > 0:
+                read_sub_array = super_array[f2:-f2, f2:-f2]
+            else:
+                read_sub_array = super_array
 
-    # Resulting array is a superset of the data; we need to strip off the
-    # overlap before writing it
-    temp_array = new_data[f2:-1*f2, f2:-1*f2]
+            # Reset NoData values in our result to match the NoData areas in
+            # the source array (areas in temp_array where corresponding cells
+            # in read_sub_array==NoData get set to t_nodata)
+            np.putmask(temp_array, read_sub_array == s_nodata, t_nodata)
 
-    # slice down super_array to get original chunk of data (ie, super_array
-    # minus additional data on edges) to use for finding NoData areas
-    read_sub_array = super_array[f2:-f2, f2:-f2]
+        with lock:
+            # ===== LOCK HERE =====
+            # Open target file handle
+            t_fh = gdal.Open(target_dem_path, gdal.GA_Update)
+            t_band = t_fh.GetRasterBand(band)
 
-    # Reset NoData values in our result to match the NoData areas in the source
-    # array (areas in temp_array where corresponding cells in
-    # read_sub_array==NoData get set to t_nodata)
-    np.putmask(temp_array, read_sub_array == s_nodata, t_nodata)
+            # Sliced down chunk gets written into new file its original
+            # position in the file (super array dimensions and offsets have
+            # been calculated, used, and discarded and are no longer
+            # applicable)
+            t_band.WriteArray(temp_array, x_start, y_start)
 
-    with lock:
-        # ===== LOCK HERE =====
-        # Open target file handle
-        t_fh = gdal.Open(target_dem_path, gdal.GA_Update)
-        t_band = t_fh.GetRasterBand(1)
-
-        # Sliced down chunk gets written into new file its original position in
-        # the file (super array dimensions and offsets have been calculated,
-        # used, and discarded and are no longer applicable)
-        t_band.WriteArray(temp_array, x_start, y_start)
-
-        t_band = None
-        t_fh = None
-        # ===== UNLOCK HERE =====
+            t_band = None
+            t_fh = None
+            # ===== UNLOCK HERE =====
 
     # Explicit memory management
     read_array = None
@@ -581,7 +669,12 @@ def lock_init(l):
 def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                 options, num_threads=1, verbose=False):
     '''
-    Breaks a raster into smaller chunks for easier processing.
+    Breaks a raster into smaller chunks for easier processing. This method
+    determines the file parameters, prepares the output parameter, calculates
+    the start/end indices for each chunk, and stores info about each chunk in
+    a Chunk() object. This object is then passed to mp.pool() along with a
+    call to ProcessSuperArray() to perform the actual processing in parallel.
+
     in_dem_path:    Full path to input raster.
     out_dem_path:   Full path to resulting raster.
     chunk_size:     Square dimension of data chunk to process.
@@ -594,6 +687,8 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     options:        Dictionary of opt, value pairs to be passed to the
                     processing tool. Any opts that don't apply to the specific
                     method will be ignored.
+    num_threads:    The number of concurrent processes to be spawned by
+                    mp.pool().
     verbose:        Flag to print out more information (including mdenoise
                     output)
 
@@ -604,65 +699,81 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
 
     # Method name and option checks
     if method == "blur_gauss":
-        gauss_opts = ["filter_size"]
+        gauss_opts = ["radius", "sigma"]
         for opt in gauss_opts:
-            if opt not in options:
-                raise ValueError("Required option {} not provided for method \
-                                 {}.".format(opt, method))
-        # Check overlap against filter_size
-        if overlap < 2 * options["filter_size"]:
-            overlap = 2 * options["filter_size"]
+            # if the req'd option isn't in the options dictionary or the value
+            # in the dictionary is None
+            if opt not in options or not options[opt]:
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
+        # Check overlap against radius
+        if overlap < 2 * options["radius"]:
+            overlap = 2 * options["radius"]
+
+    elif method == "blur_mean":
+        mean_opts = ["radius"]
+        for opt in mean_opts:
+            if opt not in options or not options[opt]:
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
+        if overlap < 2 * options["radius"]:
+            overlap = 2 * options["radius"]
+
+    elif method == "blur_toews":
+        mean_opts = ["radius"]
+        for opt in mean_opts:
+            if opt not in options or not options[opt]:
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
+        if overlap < 2 * options["radius"]:
+            overlap = 2 * options["radius"]
 
     elif method == "mdenoise":
         mdenoise_opts = ["t", "n", "v"]
         for opt in mdenoise_opts:
-            if opt not in options:
-                raise ValueError("Required option {} not provided for method \
-                                 {}.".format(opt, method))
+            if opt not in options or not options[opt]:
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
 
     elif method == "clahe":
-        clahe_opts = ["filter_size", "clip_limit"]
+        clahe_opts = ["kernel_size", "clip_limit"]
         for opt in clahe_opts:
-            if opt not in options:
-                raise ValueError("Required option {} not provided for method \
-                                 {}.".format(opt, method))
-        if overlap < 2 * options["filter_size"]:
-            overlap = 2 * options["filter_size"]
+            if opt not in options or not options[opt]:
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
+        if overlap < 2 * options["kernel_size"]:
+            overlap = 2 * options["kernel_size"]
 
     elif method == "TPI":
-        TPI_opts = ["filter_size"]
+        TPI_opts = ["radius"]
         for opt in TPI_opts:
-            if opt not in options:
-                raise ValueError("Required option {} not provided for method \
-                                 {}.".format(opt, method))
-        if overlap < 2 * options["filter_size"]:
-            overlap = 2 * options["filter_size"]
-
-    elif method == "blur_mean":
-        mean_opts = ["filter_size"]
-        for opt in mean_opts:
-            if opt not in options:
-                raise ValueError("Required option {} not provided for method \
-                                 {}.".format(opt, method))
-        if overlap < 2 * options["filter_size"]:
-            overlap = 2 * options["filter_size"]
+            if opt not in options or not options[opt]:
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
+        if overlap < 2 * options["radius"]:
+            overlap = 2 * options["radius"]
 
     elif method == "hillshade":
         hillshade_opts = ["alt", "az"]
         for opt in hillshade_opts:
-            if opt not in options:
-                raise ValueError("Required option {} not provided for method \
-                                 {}.".format(opt, method))
+            if opt not in options or not options[opt]:
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
 
     elif method == "skymodel":
         sky_opts = ["lum_file"]
         for opt in sky_opts:
-            if opt not in options:
-                raise ValueError("Required option {} not provided for method \
-                                 {}.".format(opt, method))
-
+            if opt not in options or not options[opt]:
+                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
+    elif method == "test":
+        pass
     else:
         raise NotImplementedError("Method not recognized: {}".format(method))
+
+    # If we're doing a skymodel, we need to read in the whole luminance file
+    # and add that list to the options dictionary
+    if method == "skymodel":
+        if verbose:
+            print("Reading in luminance file {}".format(options["lum_file"]))
+        lines = []
+        with open(options["lum_file"], 'r') as l:
+            reader = csv.reader(l)
+            for line in reader:
+                lines.append(line)
+        options["lum_lines"] = lines
 
     gdal.UseExceptions()
 
@@ -672,6 +783,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     rows = s_fh.RasterYSize
     cols = s_fh.RasterXSize
     driver = s_fh.GetDriver()
+    bands = s_fh.RasterCount
     s_band = s_fh.GetRasterBand(1)
 
     # Get source georeference info
@@ -680,9 +792,9 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     cell_size = abs(transform[5])  # Assumes square pixels where height=width
     s_nodata = s_band.GetNoDataValue()
 
-    if s_nodata is None:
+    if s_nodata is None and bands == 1:  # assume a multiband file is an image
         raise ValueError("No NoData value set in input DEM.")
-    if verbose:
+    if verbose and s_nodata is not None:  # Report the source nodata if present
         print("\tSource NoData Value: {0:f}\n".format(s_nodata))
 
     # Close source file handle
@@ -697,158 +809,148 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         raise IOError("Output file {} already exists.".format(out_dem_path))
     # Set outfile options
     # If it's hillshade or skymodel, we want nodata = 0 and gdal byte
-    if method in ['hillshade', 'skymodel']:
+    # THIS WAS FOR SCALING, BUT SCALING DOESN'T WORK (SEE NOTE IN SKYMODEL)
+    # Now using for CLAHE
+    if method in ['clahe']:
         t_nodata = 0
         dtype = gdal.GDT_Byte
     else:
         t_nodata = s_nodata
         dtype = gdal.GDT_Float32
 
-    t_fh = driver.Create(out_dem_path, cols, rows, 1, dtype)
+    # compression Options
+    jpeg_opts = ["compress=jpeg", "interleave=pixel", "photometric=ycbcr",
+                 "tiled=yes", "jpeg_quality=90", "bigtiff=yes"]
+    lzw_opts = ["compress=lzw", "tiled=yes", "bigtiff=yes"]
+    # Use jpeg compression opts if three bands, otherwise lzw
+    if bands == 3 and driver.LongName == 'GeoTIFF':
+        opts = jpeg_opts
+    elif driver.LongName == 'GeoTIFF':
+        opts = lzw_opts
+    else:
+        opts = []
+
+    t_fh = driver.Create(out_dem_path, cols, rows, bands, dtype, options=opts)
     t_fh.SetGeoTransform(transform)
     t_fh.SetProjection(projection)
     t_band = t_fh.GetRasterBand(1)
-    t_band.SetNoDataValue(t_nodata)
+    if bands == 1:
+        t_band.SetNoDataValue(t_nodata)
 
     if verbose:
-        print("Method: {}".format(method))
+        #print("Method: {}".format(method))
         print("Options:")
         for opt in options:
             print("\t{}: {}".format(opt, options[opt]))
         print("Preparing output file {}...".format(out_dem_path))
         print("\tOutput dimensions: {} rows by {} columns.".format(rows, cols))
-        print("\tOutput data type: {}".format(dtype))
+        print("\tOutput data type: {}".format(
+            gdal_array.GDALTypeCodeToNumericTypeCode(dtype)))
         print("\tOutput size: {}".format(
-            sizeof_fmt(rows * cols * gdal.GetDataTypeSize(dtype) / 8.)))
+            sizeof_fmt(bands * rows * cols * gdal.GetDataTypeSize(dtype) / 8)))
         print("\tOutput NoData Value: {}".format(t_nodata))
 
     # Close target file handle (causes entire file to be written to disk)
     t_band = None
     t_fh = None
 
-    # If we're doing a skymodel, we need to read in the whole luminance file
-    # and add that list to the options dictionary
-    if method == "skymodel":
-        if verbose:
-            print("Reading in luminance file {}".format(options["lum_file"]))
-        lines = []
-        with open(options["lum_file"], 'r') as l:
-            reader = csv.reader(l)
-            for line in reader:
-                lines.append(line)
-        options["lum_lines"] = lines
-
-    # This check will parallelize the process assuming a file that is square or
-    # fairly close to it. A file with one dimension that vastly exceeds the
-    # limit while the other does not exceed it at all will attempt to be read
-    # as one chunk. This could lead to out-of-memory issues.
-    #
-    # Also, we could probably code up an automatic chunk_size setter based on
+    # We could probably code up an automatic chunk_size setter based on
     # data type and system memory limits
-    if rows > chunk_size and cols > chunk_size:
-        # calculate breaks every chunk_size pixels
-        row_splits = list(range(0, rows, chunk_size))
-        col_splits = list(range(0, cols, chunk_size))
 
-        # add total number of rows/cols to be last break (used for x/y_end)
-        row_splits.append(rows)
-        col_splits.append(cols)
+    # calculate breaks every chunk_size pixels
+    row_splits = list(range(0, rows, chunk_size))
+    col_splits = list(range(0, cols, chunk_size))
 
-        # Double the overlap just to be safe. This distance becomes one side of
-        # the super_array beyond the wanted data (f2 <> x values <> f2)
+    # add total number of rows/cols to be last break (used for x/y_end)
+    row_splits.append(rows)
+    col_splits.append(cols)
+
+    # List of chunks to be iterated over with pool.map()
+    iterables = []
+
+    total_chunks = (len(row_splits) - 1) * (len(col_splits) - 1)
+    progress = 0
+
+    # Double the overlap just to be safe. This distance becomes one side of
+    # the super_array beyond the wanted data (f2 <> x values <> f2)
+    # if there's only one chunk, set overlap to 0 so that read indeces
+    # aren't out of bounds
+    if total_chunks > 1:
         f2 = 2 * overlap
-
-        # Iterable variables sent to child processes in tuple
-        iterables = []  # List of tuples to be iterated over with pool.map()
-        total_chunks = (len(row_splits) - 1) * (len(col_splits) - 1)
-        progress = 0
-
-        # === Multiprocessing notes ===
-        # Procedure: open s/t, get and set relevant metadata, close, create
-        # list of chunk objects, create pool, execute super_array with
-        # map(function, list of chunks)
-        #   x/y_start = col/row_splits[j/i]- starting original raster index
-        #   of the chunk
-        #   x/y_end = col/row_splits[j/i +1]- ending (up to, not including)
-        #   original raster index of the chunk
-
-        # Create simple chunk objects that hold data about each chunk to be
-        # sent to the processor
-        # Rows = i = y values, cols = j = x values
-        for i in range(0, len(row_splits) - 1):
-            for j in range(0, len(col_splits) - 1):
-                progress +=1
-
-                # chunk object to hold all the data
-                chunk = Chunk()
-
-                # These are specific to each chunk
-                chunk.progress = progress
-                chunk.tile = "{}-{}".format(i, j)
-                # x/y_start are the starting position of the original chunk
-                # before adjusting the dimensions to read in the super array;
-                # they are not used directly in the ReadAsArray() calls but are
-                # used as the location that the altered array should be
-                # written in the output bands WriteArray() calls.
-                chunk.x_start = col_splits[j]
-                chunk.y_start = row_splits[i]
-                # end positions of initial chunk, used to compute read window
-                chunk.x_end = col_splits[j+1]
-                chunk.y_end = row_splits[i+1]
-
-                # These are constant over the whole raster
-                chunk.s_nodata = s_nodata
-                chunk.t_nodata = t_nodata
-                chunk.cell_size = cell_size
-                chunk.mdenoise_path = mdenoise_path
-                chunk.in_dem_path = in_dem_path
-                chunk.out_dem_path = out_dem_path
-                chunk.f2 = f2
-                chunk.rows = rows
-                chunk.cols = cols
-                chunk.total_chunks = total_chunks
-                chunk.method = method
-                chunk.options = options
-                chunk.verbose = verbose
-                chunk.start_time = start
-
-                iterables.append(chunk)
-
-        # Create lock to lock s_fh and t_fh reads and writes
-        l = mp.Lock()
-
-        print("\nProcessing chunks...")
-        # Call pool.map with the lock initializer method, super array
-        # processor, and list of chunk objects.
-        # chunksize=1 keeps the input processing more-or-less in order
-        # (otherwise, for 4 processes working on 100 chunks, each process
-        # starts at 0, 25, 50, and 75).
-        # pool.map() guarantees the results will be in order, but not
-        # necessarily the processing.
-        # maxtasksperchild sets a limit on the number of tasks assigned to each
-        # process, hopefully limiting memory leaks within each subprocess
-        with mp.Pool(processes=num_threads,
-                     initializer=lock_init,
-                     initargs=(l,),
-                     maxtasksperchild=10
-                     ) as pool:
-            pool.map(ProcessSuperArray, iterables, chunksize=1)
-
-    # If it doesn't fit in one chunk, no need to chunk it up
-    # TODO: finish this else path
     else:
-        # sub_data = s_fh.ReadAsArray()
-        # # Do something with the data
-        # if method == "fftconvolve":
-        #     new_data = blur(sub_data, options["filter_size"])
-        # elif method == "mdenoise":
-        #     new_data = mdenoise(sub_data, options["t"], options["n"], options["v"])
-        # elif method == "hillshade":
-        #     new_data = hillshade(super_array)
-        # else:
-        #     raise NotImplementedError("Method not implemented: %s" %method)
-        # t_band.WriteArray(new_data)
-        pass
+        f2 = 0
+
+    # === Multiprocessing notes ===
+    # Procedure: open s/t, get and set relevant metadata, close, create
+    # list of chunk objects, create pool, execute super_array with
+    # map(function, list of chunks)
+    #   x/y_start = col/row_splits[j/i]- starting original raster index
+    #   of the chunk
+    #   x/y_end = col/row_splits[j/i +1]- ending (up to, not including)
+    #   original raster index of the chunk
+
+    # Create simple chunk objects that hold data about each chunk to be
+    # sent to the processor
+    # Rows = i = y values, cols = j = x values
+    for i in range(0, len(row_splits) - 1):
+        for j in range(0, len(col_splits) - 1):
+            progress += 1
+
+            # chunk object to hold all the data
+            chunk = Chunk()
+
+            # These are specific to each chunk
+            chunk.progress = progress
+            chunk.tile = "{}-{}".format(i, j)
+            # x/y_start are the starting position of the original chunk
+            # before adjusting the dimensions to read in the super array;
+            # they are not used directly in the ReadAsArray() calls but are
+            # used as the location that the altered array should be
+            # written in the output bands WriteArray() calls.
+            chunk.x_start = col_splits[j]
+            chunk.y_start = row_splits[i]
+            # end positions of initial chunk, used to compute read window
+            chunk.x_end = col_splits[j + 1]
+            chunk.y_end = row_splits[i + 1]
+
+            # These are constant over the whole raster
+            chunk.s_nodata = s_nodata
+            chunk.t_nodata = t_nodata
+            chunk.cell_size = cell_size
+            chunk.mdenoise_path = mdenoise_path
+            chunk.in_dem_path = in_dem_path
+            chunk.out_dem_path = out_dem_path
+            chunk.f2 = f2
+            chunk.rows = rows
+            chunk.cols = cols
+            chunk.total_chunks = total_chunks
+            chunk.method = method
+            chunk.options = options
+            chunk.verbose = verbose
+            chunk.start_time = start
+            chunk.bands = bands
+
+            iterables.append(chunk)
+
+    # Create lock to lock s_fh and t_fh reads and writes
+    l = mp.Lock()
+
+    print("\nProcessing chunks...")
+    # Call pool.map with the lock initializer method, super array
+    # processor, and list of chunk objects.
+    # chunksize=1 keeps the input processing more-or-less in order
+    # (otherwise, for 4 processes working on 100 chunks, each process
+    # starts at 0, 25, 50, and 75).
+    # pool.map() guarantees the results will be in order, but not
+    # necessarily the processing.
+    # maxtasksperchild sets a limit on the number of tasks assigned to each
+    # process, hopefully limiting memory leaks within each subprocess
+    with mp.Pool(processes=num_threads,
+                 initializer=lock_init,
+                 initargs=(l,),
+                 maxtasksperchild=10
+                 ) as pool:
+        pool.map(ProcessSuperArray, iterables, chunksize=1)
 
     finish = datetime.datetime.now() - start
     if verbose:
@@ -856,253 +958,12 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     return(finish)
 
 
-def RCProcessing(in_dem_path, out_dem_path, chunk_size, overlap, method, options):
-    '''
-    --- OLD- SUPERSEDED BY ParalleRCP ---
-    Breaks a raster into smaller chunks for easier processing.
-    in_dem_path:    Full path to input raster.
-    out_dem_path:   Full path to resulting raster.
-    chunk_size:     Square dimension of data to be operated on.
-    overlap:        Data to be read beyond dimensions of chunk_size to ensure
-                    methods that require neighboring pixels produce accurate
-                    results on the borders. Should be at least 2x any filter
-                    or kernel size for any method (will automattically be set if
-                    method is fftconvolve).
-    method:         Name of the raster processing tool to be run on the chunks.
-    options:        Dictionary of opt, value pairs to be passed to the
-                    processing tool. Any opts that don't apply to the specific
-                    method will be ignored.
-    '''
-
-    # Method name and option checks
-    if method == "fftconvolve":
-        fft_opts = ["filter_size"]
-        for opt in fft_opts:
-            if opt not in options:
-                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
-        # Check overlap against filter_size
-        if overlap < 2 * options["filter_size"]:
-            overlap = 2* options["filter_size"]
-    elif method == "mdenoise":
-        mdenoise_opts = ["t", "n", "v"]
-        for opt in mdenoise_opts:
-            if opt not in options:
-                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
-    elif method == "clahe":
-        clahe_opts = ["filter_size", "clip_limit"]
-        for opt in clahe_opts:
-            if opt not in options:
-                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
-        if overlap < 2 * options["filter_size"]:
-            overlap = 2* options["filter_size"]
-    elif method == "TPI":
-        TPI_opts = ["filter_size"]
-        for opt in TPI_opts:
-            if opt not in options:
-                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
-        if overlap < 2 * options["filter_size"]:
-            overlap = 2* options["filter_size"]
-    else:
-        raise NotImplementedError("Method not implemented: %s" %method)
-
-    gdal.UseExceptions()
-
-    start = datetime.datetime.now()
-    #print("Started: " + start.strftime("%Y-%m-%d %H:%M:%S"))
-
-    # Get source file
-    print("Opening {0:s}...".format(in_dem_path))
-    s_fh = gdal.Open(in_dem_path, gdal.GA_ReadOnly)
-    rows = s_fh.RasterYSize
-    cols = s_fh.RasterXSize
-    driver = s_fh.GetDriver()
-    s_band = s_fh.GetRasterBand(1)
-
-    # Get source georeference info
-    transform = s_fh.GetGeoTransform()
-    projection = s_fh.GetProjection()
-    # These are Global Variables, handle with care
-    global cell_size
-    global s_nodata
-    cell_size = abs(transform[5]) # Assumes square pixels where height=width
-    s_nodata = s_band.GetNoDataValue()
-
-    if s_nodata is None:
-        raise Exception("No NoData value set in input DEM.")
-    print("Source NoData Value: {0:f}\n".format(s_nodata))
-
-    # Set up target file
-    t_fh = driver.Create(out_dem_path, cols, rows, 1, gdal.GDT_Float32)
-    t_fh.SetGeoTransform(transform)
-    t_fh.SetProjection(projection)
-    t_band = t_fh.GetRasterBand(1)
-    t_band.SetNoDataValue(s_nodata)
-
-    # This check will limit the memory usage assuming a file that is square or
-    # fairly close to it. A file with one dimension that vastly exceeds the size
-    # limit while the other does not exceed it at all will attempt to be read
-    # as one chunk. This could lead to out-of-memory issues.
-    #
-    # Also, we could probably code up an automatic chunk_size setter based on
-    # data type and system memory limits
-    if rows > chunk_size and cols > chunk_size:
-        # calculate breaks every chunk_size pixels
-        row_splits = list(range(0, rows, chunk_size))
-        col_splits = list(range(0, cols, chunk_size))
-
-        # add total number of rows/cols to be last break
-        row_splits.append(rows)
-        col_splits.append(cols)
-
-        # Filter factor multiple- equals one side of super_array beyond wanted data
-        f2 = 2 * overlap
-        # print(row_splits)
-        # print(col_splits)
-
-        # Progress variables
-        total_chunks = (len(row_splits) - 1) * (len(col_splits) - 1)
-        progress = 0
-
-        # === Multiprocessing notes ===
-        # Variables/Objects needed below this point:
-        #   s_fh: complex object, ReadAsArray() used to get source raster data
-        #   t_band: complex objet, WriteArray() used to write new raster data
-        #   row_splits, col_splits: lists, read only, define indices of the source raster to read from
-        #   progress: int, r/w, progress counter
-        #   total_chunks: int, read only, for progress counter
-        #   s_nodata: float, read only, global variable
-        #   options: dictionary, read only, passed through to processing methods
-        #   temp_dir: string, read only, global used to create temp asc path for mdenoise
-        #   cell_size: float, read only, global used to create temp asc
-        #   mdenoise_path: string, read only, global
-        #
-        # Would need to handle data going to s_fh and t_band (file access) and to progress (simple variable)
-        # All data shared between processes must be picklable. May need to open/close both s_fh and t_fh in each process
-
-
-        # Rows = i = y values, cols = j = x values
-        # row_splits[i] and col_splits[j] represent the starting position of the original chunk before the super array is read in; they are not used directly in the ReadAsArray() calls but are used as the location that the altered array should be written in the output bands WriteArray() calls.
-        for i in range(0, len(row_splits) - 1):
-            for j in range(0, len(col_splits) - 1):
-                progress +=1
-
-                # Non-edge-case values for super array
-                x_size = col_splits[j+1] - col_splits[j] + 2 * f2
-                y_size = row_splits[i+1] - row_splits[i] + 2 * f2
-                x_off = col_splits[j] - f2
-                y_off = row_splits[i] - f2
-
-                # Values for ReadAsArray, these aren't changed later unelss the border case checks change them
-                read_x_off = x_off
-                read_y_off = y_off
-                read_x_size = x_size
-                read_y_size = y_size
-
-                # Slice values (of super_array) for copying read_array in to super_array, these aren't changed later unelss the border case checks change them
-                sa_x_start = 0
-                sa_x_end = x_size
-                sa_y_start = 0
-                sa_y_end = y_size
-
-                # Edge logic
-                # If super_array exceeds bounds of image:
-                #   Adjust x/y offset to appropriate place (for < 0 cases only).
-                #   Reduce read size by 2*overlap (we're not reading that edge area on one side)
-                #   Move start or end value for super_array slice by 2*overlap
-                # Each of x/y can only be under (start of row/col) or over (end of row/col)
-                #   ie, the input raster must be broken into at least two chunks in each direction
-                # Checks both x and y, setting read and slice values for each dimension if needed
-                if x_off < 0:
-                    read_x_off = 0
-                    read_x_size = x_size - f2
-                    sa_x_start = f2
-                elif x_off + x_size > cols:
-                    read_x_size = x_size - f2
-                    sa_x_end = -1 * f2
-
-                if y_off < 0:
-                    read_y_off = 0
-                    read_y_size = y_size - f2
-                    sa_y_start = f2
-                elif y_off + y_size > rows:
-                    read_y_size = y_size - f2
-                    sa_y_end = -1 * f2
-
-                percent = (progress / total_chunks) * 100
-                print("Tile {0:d}-{1:d}: {2:d} of {3:d} ({4:0.2f}%)".format(i, j, progress, total_chunks, percent))
-
-                #print("Read args: %d %d %d %d" %(read_x_off, read_y_off, read_x_size, read_y_size))
-
-                # Master read call. read_ variables have been changed for edge cases if needed
-                read_array = s_fh.ReadAsArray(read_x_off, read_y_off, read_x_size, read_y_size)
-                # Arrays are of form [rows, cols], thus [y, x] when slicing
-
-                # Array holding superset of actual desired window, initialized to NoData value
-                # Edge case logic insures edges fill appropriate portion when loaded in
-                # super_array must be of type float for fftconvolve
-                super_array = np.full((y_size, x_size), s_nodata)
-
-                # The cells of super_array correspondning to the read_array are replaced with data from read_array. This should change every value, except for edge cases that leave portions of the super_array as NoData
-                #print("Super Array slices: [%d:%d, %d:%d]" %(sa_y_start, sa_y_end, sa_x_start, sa_x_end))
-                super_array[sa_y_start:sa_y_end, sa_x_start:sa_x_end] = read_array
-
-                # Do something with the data
-                if method == "fftconvolve":
-                    new_data = blur(super_array, options["filter_size"])
-                elif method == "mdenoise":
-                    new_data = mdenoise(super_array, options["t"], options["n"], options["v"])
-                elif method == "hillshade":
-                    new_data = hillshade(super_array)
-                elif method == "clahe":
-                    new_data = exposure.equalize_adapthist(super_array.astype(int), options["filter_size"], options["clip_limit"])
-                elif method == "TPI":
-                    new_data = TPI(super_array, options["filter_size"])
-                else:
-                    raise NotImplementedError("Method not implemented: %s" %method)
-
-                # Resulting array is a superset of the data; we need to slice it down before writing it
-                temp_array = new_data[f2:-1*f2, f2:-1*f2]
-
-                # slice down super_array to get original chunk of data (ie, super_array minus additional data on edges) to use for finding NoData areas
-                read_sub_array = super_array[f2:-f2, f2:-f2]
-
-                # Reset NoData values in our result to match the NoData areas in the source array (areas in temp_array where corresponding cells in read_sub_array==NoData get set to s_nodata)
-                np.putmask(temp_array, read_sub_array==s_nodata, s_nodata)
-
-                # Sliced down chunk gets written into new file its proper position in the file (super array dimensions and offsets have been calculated, used, and discarded and are no longer applicable)
-                t_band.WriteArray(temp_array, col_splits[j], row_splits[i])
-
-    # If it fits in one chunk (see note above), read entire file at once
-    # TODO: check for NoData stuff on this branch. Haven't kept up to date compared to "if" branch.
-    else:
-        sub_data = s_fh.ReadAsArray()
-        # Do something with the data
-        if method == "fftconvolve":
-            new_data = blur(sub_data, options["filter_size"])
-        elif method == "mdenoise":
-            new_data = mdenoise(sub_data, options["t"], options["n"], options["v"])
-        elif method == "hillshade":
-            new_data = hillshade(super_array)
-        else:
-            raise NotImplementedError("Method not implemented: %s" %method)
-        t_band.WriteArray(new_data)
-
-    # === Multiprocessing Would End Here ===
-
-    # Close out band first, then file handle (GDAL python gotcha)
-    print("Closing output file {0:s}...".format(out_dem_path))
-    t_band = None
-    t_fh = None
-
-    finish = datetime.datetime.now() - start
-    print("Total time: " + str(finish))
-
-
 # ==============================================================================
 # Main Variables
 
 # Global variables
-# These are read in as part of opening the file in smooth() but will be used by WriteASC() as part of the mdenoise() call
+# These are read in as part of opening the file in ProcessSuperArray() but will
+# be used by WriteASC() as part of the mdenoise() call
 # s_nodata is used several places; really needs to have been set in input DEM.
 global cell_size
 global s_nodata
@@ -1112,68 +973,118 @@ mdenoise_path = "c:\\temp\\gis\\lidar\\MDenoise.exe"
 # Need this check for multiprocessing in windows
 if "__main__" in __name__:
 
-    #in_dem = "f:\\CacheValley_Lidar_2016\\ERDAS_IMG_Raster_DEM\\DEM-ft.tif"
-    #smooth_dem = "f:\\CacheValley_Lidar_2016\\ERDAS_IMG_Raster_DEM\\DEM-ft-smoothed-80_60_80.tif"
-    #hs_dem = "f:\\CacheValley_Lidar_2016\\ERDAS_IMG_Raster_DEM\\DEM-ft-smoothed-hs-80_60_80-z80.tif"
+    # Required arguments:
+    # Parent:
+    #   -m method, string
+    #   -o overlap, int (filter_f below)
+    #   -s chunk size, int (window size below)
+    #   -p number of processes, int, default 1
+    #   --verbose sets verbose to True
+    # Method-specific:
+    #   -r kernel radius, int (blur_mean, blur_gauss, TPI)
+    #   -d gaussian standard distribution (sigma), int
+    #   -n mdenoise n parameter, int
+    #   -t mdenoise t parameter, float
+    #   -v mdenoise v parameter, int
+    #   -c clahe clip parameter, float
+    #   -k clahe kernel size, int
+    #   -l luminance file
 
-    #in_dem = "f:\\CacheValley_Lidar_2016\\ERDAS_IMG_Raster_DEM\\DEM-ft.tif"
-    #smooth_dem = "e:\\lidar\\dem\\DEM-ft-md506050.tif"
-    #s_dem = "e:\\lidar\\dem\\DEM-ft-80-90-90_hs.tif"
+    args = argparse.ArgumentParser(usage='%(prog)s -m method [general options] [method specific options] infile outfile', description='Effectively divides arbitrarily large DEM rasters into chunks that will fit in memory and runs the specified processing method on each chunk, with parallel processing of the chunks available for significant runtime advantages. Current methods include smoothing algorithms (blur_mean, blur_gauss, and Sun et al\'s mdenoise), CLAHE contrast stretching, TPI, and Kennelly & Stewart\'s skymodel hillshade algorithm.')
+    all = args.add_argument_group('all', 'General options for all methods')
+    all.add_argument('-m', dest='method',
+                     choices=['blur_mean', 'blur_gauss', 'blur_toews',
+                              'mdenoise', 'hillshade', 'skymodel', 'clahe',
+                              'TPI'],
+                     help='Processing method')
+    all.add_argument('-o', dest='chunk_overlap', required=True, type=int,
+                     help='Chunk overlap size in pixels; try 25. Will be changed to 2*kernel size if less than 2*kernel size for relevant methods.')
+    all.add_argument('-s', dest='chunk_size', required=True, type=int,
+                     help='Chunk size in pixels; try 1500 for mdenoise')
+    all.add_argument('-p', dest='proc', default=1, type=int,
+                     help='Number of concurrent processes (default of 1)')
+    all.add_argument('--verbose', dest='verbose', default=False,
+                     help='Show detailed output', action='store_true')
 
-    #in_dem = "c:\\temp\\gis\\dem_state.tif"
+    kernel_args = args.add_argument_group('kernel', 'Kernel radius for blur_mean, blur_gauss, TPI, and CLAHE')
+    kernel_args.add_argument('-r', dest='radius',
+                             type=int, help='Kernel radius in pixels; try 15')
 
-    #smooth_dem = "c:\\temp\\gis\\dem_state_gauss30.tif"
-    #hs_dem = "c:\\temp\\gis\\hstest\\dem_state_gauss30_sky.tif"
-    lum = "c:\\gis\\temp\\1_35_245_250.csv"
+    blur_gauss_args = args.add_argument_group('blur_gauss', 'Gaussian blur options; also requires -r')
+    blur_gauss_args.add_argument('-d', dest='sigma', type=float, help='Standard deviation of the distribution (sigma). Controls amount of smoothing; try 1.')
 
-    #in_dem = "e:\\lidar\\canyons\\dem\\merged_raw_dem.vrt"
-    smooth_dem = "c:\\gis\\data\\elevation\\CacheFranklinNED10m\\cf_utm.tif"
-    hs_dem = "c:\\gis\\data\\elevation\\CacheFranklinNED10m\\cf_sky.tif"
+    mdenoise_args = args.add_argument_group('mdenoise', 'Mesh Denoise (Sun et al, 2007) smoothing algorithm options')
+    mdenoise_args.add_argument('-n', dest='n', type=int,
+                               help='Iterations for Normal updating; try 10')
+    mdenoise_args.add_argument('-t', dest='t', type=float,
+                               help='Threshold; try .6')
+    mdenoise_args.add_argument('-v', dest='v', type=int,
+                               help='Iterations for Vertex updating; try 20')
+
+    clahe_args = args.add_argument_group('clahe', 'Contrast Limited Adaptive Histogram Equalization (CLAHE) options')
+    clahe_args.add_argument('-c', dest='clip_limit', type=float,
+                            help='Clipping limit. Try 0.01; higher values give more contrast')
+    clahe_args.add_argument('-k', dest='kernel_size',
+                             type=int, help='Kernel size in pixels; try 30')
+
+    hs_args = args.add_argument_group('hs', 'Hillshade options')
+    hs_args.add_argument('-az', dest='az', type=int, default=315,
+                         help='Azimuth (default of 315)')
+    hs_args.add_argument('-alt', dest='alt', type=int, default=45,
+                         help='Altitude (default of 45)')
+
+    sky_args = args.add_argument_group('sky', 'Skymodel options')
+    sky_args.add_argument('-l', dest='lum_file',
+                          help='Luminance file with header line removed')
+
+    out_args = args.add_argument_group('out', 'Input/Output files')
+    out_args.add_argument('infile', help='Input DEM')
+    out_args.add_argument('outfile', help='Output file')
+
+    arguments = args.parse_args()  # get the arguments as namespace object
+
+    arg_dict = vars(arguments)  # serve the arguments as dictionary
+
+    input_DEM = arg_dict['infile']
+    out_file = arg_dict['outfile']
+    chunk_size = arg_dict['chunk_size']
+    #radius = arg_dict['radius']
+    method = arg_dict['method']
+    overlap = arg_dict['chunk_overlap']
+    num_threads = arg_dict['proc']
+    verbose = arg_dict['verbose']
+
+    try:
+        # Make sure mdenoise path is set
+        if arg_dict['method'] == 'mdenoise' and not mdenoise_path:
+            raise ValueError('Path to mdenoise executable must be set (variable mdenoise_path in raster_chunk_processing.py)')
+        if arg_dict['method'] == 'mdenoise' and not os.path.isfile(mdenoise_path):
+            raise FileNotFoundError('mdenoise executable {} not found'.format(mdenoise_path))
+        ParallelRCP(input_DEM, out_file, chunk_size, overlap, method, arg_dict,
+                    num_threads, verbose)
+    except Exception as e:
+        print("\n--- Error ---")
+        print(e)
+        if verbose:
+            print("\n")
+            print(traceback.format_exc())
 
 
-    # md105060 = n=10, t=0.50, v=60
+# General Notes
+# md105060 = n=10, t=0.50, v=60
 
-    filter_f = 30
-    window_size = 1500
-    n = 50
-    t = 0.60
-    v = 50
-    clip = 0.1
+# Something's going weird with edge cases: edge case tiles to the top and left of non-case edge tiles are coming out zero, but everything below and to the right come out as nodata.
+# Solved post-edge case problem (was checking if offset was > row/col, rather than if offset + size > row/col). Still getting all 0s in pre-edge cases, and dem values seem to be shifted up and left (-x and -y) by some multiple of the filter size.
+# Fixed! was giving weird offsets to band write array method. Should just be the starting col and row for that chunk (t_band.WriteArray(temp_array, col_splits[j], row_splits[i]))
 
-    #RCProcessing(in_dem, smooth_dem, window_size, filter_f, "mdenoise", {"n":n, "t":t, "v":v})
-    #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "mdenoise", {"n":n, "t":t, "v":v}, 3, False)
-    #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "blur_gauss", {"filter_size":30}, 3, True)
-    #ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "TPI", {"filter_size":60}, num_threads=4, verbose=True)
+# Window Sizes, all else constant:
+# 2000: mdenoise.exe fails
+# 1500: 8 chunks, total time:   3:12
+# 1000: 15 chunks, total time:  3:20
+# 500:  50 chunks, total time:  3:38
+# Total time increases as number of chunks increases, due to overhead of writing/reading temp files
+# Ditto for skymodel: as chunk size increases (number of chunks decreases), time decreases rapidly to a point around 1500-2000 chunk size, then greatly diminishing returns.
+# Memory usage increases from ~200mb/process @ 500 to ~1.2gb/proc @ 1500 to ~2.2gb/proc @ 5000 (check these numbers; memory usage should scale linearly with array size (thus the square of the chunk size))
 
-
-    ParallelRCP(smooth_dem, hs_dem, 5000, filter_f, "skymodel", {"lum_file":lum}, num_threads=3, verbose=True)
-    #ParallelRCP(smooth_dem, hs_dem, 4000, filter_f, "hillshade", {"az":315, "alt":45}, num_threads=3, verbose=True)
-
-    # times = {}
-    # for i in range(1, 11, 1):
-    #     smooth_dem = "c:\\temp\\gis\\dem_state_ParallelRCPTest_{}.tif".format(i)
-    #     times[i] = ParallelRCP(in_dem, smooth_dem, window_size, filter_f, "mdenoise", {"n":n, "t":t, "v":v}, i)
-    #
-    # for run in times:
-    #     report = "{} processes: {}".format(run, times[run])
-    #     print(report)
-
-    # CLAHE, interesting contrast stretcher... doesn't work here, but keep in back of mind
-    # Might make a good transparent hillshade base
-    #clahe_in = "c:\\temp\\gis\\lidar\\single_tests\\single-ft-md-506050.tif"
-    #clahe_out = "c:\\temp\\gis\\lidar\\single_tests\\clahe\\506050_clahe01-180.tif"
-    #smooth(clahe_in, clahe_out, window_size, "clahe", filter_f, t, n, v, clip)
-    #smooth(smooth_dem, hs_dem, window_size, "hillshade", filter_f, t, n, v)
-
-    # Somethings going weird with edge cases: edge case tiles to the top and left of non-case edge tiles are coming out zero, but everything below and to the right come out as nodata.
-    # Solved post-edge case problem (was checking if offset was > row/col, rather than if offset + size > row/col). Still getting all 0s in pre-edge cases, and dem values seem to be shifted up and left (-x and -y) by some multiple of the filter size.
-    # Fixed! was giving weird offsets to band write array method. Should just be the starting col and row for that chunk (t_band.WriteArray(temp_array, col_splits[j], row_splits[i]))
-
-    # Window Sizes, all else constant:
-    # 2000: mdenoise.exe fails
-    # 1500: 8 chunks, total time:   3:12
-    # 1000: 15 chunks, total time:  3:20
-    # 500:  50 chunks, total time:  3:38
-    # Total time increases as number of chunks increases, due to overhead of writing/reading temp files
-    # Ditto for skymodel: as chunk size increases (number of chunks decreases), time decreases rapidly to a point around 1500-2000 chunk size, then greatly diminishing returns.
-    # Memory usage increases from ~200mb/process @ 500 to ~1.2gb/proc @ 1500 to ~2.2gb/proc @ 5000 (check these numbers; memory usage should scale linearly with array size (thus the square of the chunk size))
+# Jpeg stuff
+# need to change the whole thing so that the window is a multiple of the tile to fix jpeg compression issues that create artifacts when the bottom or right edges don't end at a tile boundary (manually setting window size to 1024 fixes this)
