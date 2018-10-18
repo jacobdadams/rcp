@@ -1006,7 +1006,7 @@ if "__main__" in __name__:
     all.add_argument('--verbose', dest='verbose', default=False,
                      help='Show detailed output', action='store_true')
 
-    kernel_args = args.add_argument_group('kernel', 'Kernel radius for blur_mean, blur_gauss, TPI, and CLAHE')
+    kernel_args = args.add_argument_group('kernel', 'Kernel radius for blur_mean, blur_gauss, blur_toews, and TPI')
     kernel_args.add_argument('-r', dest='radius',
                              type=int, help='Kernel radius in pixels; try 15')
 
