@@ -1,0 +1,10 @@
+name: rcp
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - numpy 1.14.*
+  - vs2015_runtime 14.*
+  - astropy
+  - scikit-image
+  - gdal
