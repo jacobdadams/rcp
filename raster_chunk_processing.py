@@ -33,6 +33,13 @@
 # Version:  1.0.0
 # Date      14 Aug 2018
 
+# TODO:
+#   Merge clahe kernel size arg with general kernel radius arg
+#   Update luminance file parser to accept files with headers
+#   Implement LoG kernel
+#   Package python env, RCP, and SkyLum in an easy-to-use download
+
+
 import numpy as np
 import datetime
 import os
@@ -181,11 +188,11 @@ def blur_gauss(in_array, sigma, radius=30):
     x, y = np.mgrid[-radius:radius + 1, -radius:radius + 1]
     # Gaussian distribution
     twosig = 2 * sigma**2
-    #g = np.exp(-(x**2 / twosig + y**2 / twosig)) / (twosig * math.pi)
+    g = np.exp(-(x**2 / twosig + y**2 / twosig)) / (twosig * math.pi)
     #LoG
-    g = (-1/(math.pi*sigma**4))*(1-(x**2 + y**2)/twosig)*np.exp(-(x**2 / twosig + y**2 / twosig)) / (twosig)
+    #g = (-1/(math.pi*sigma**4))*(1-(x**2 + y**2)/twosig)*np.exp(-(x**2 / twosig + y**2 / twosig)) / (twosig)
 
-    g = 1 - g
+    #g = 1 - g
     # Convolve the data and Gaussian function (do the Gaussian blur)
     # Supressing runtime warnings due to NaNs (they just get hidden by NoData
     # masks in the supper_array rebuild anyways)
@@ -365,7 +372,7 @@ def hillshade(in_array, az, alt, scale=False):
 def skymodel(in_array, lum_lines):
     '''
     Creates a unique hillshade based on a skymodel, implmenting the method
-    defined in Kennelly and Steward (2014), A Uniform Sky Illumination Model to
+    defined in Kennelly and Stewart (2014), A Uniform Sky Illumination Model to
     Enhance Shading of Terrain and Urban Areas.
 
     in_array:       The input array, should be read using the supper_array
@@ -968,7 +975,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
 global cell_size
 global s_nodata
 global mdenoise_path
-mdenoise_path = "c:\\temp\\gis\\lidar\\MDenoise.exe"
+mdenoise_path = r'c:\GIS\Installers\MDenoise.exe'
 
 # Need this check for multiprocessing in windows
 if "__main__" in __name__:
@@ -1025,7 +1032,7 @@ if "__main__" in __name__:
     clahe_args.add_argument('-c', dest='clip_limit', type=float,
                             help='Clipping limit. Try 0.01; higher values give more contrast')
     clahe_args.add_argument('-k', dest='kernel_size',
-                             type=int, help='Kernel size in pixels; try 30')
+                            type=int, help='Kernel size in pixels; try 30')
 
     hs_args = args.add_argument_group('hs', 'Hillshade options')
     hs_args.add_argument('-az', dest='az', type=int, default=315,
@@ -1035,7 +1042,7 @@ if "__main__" in __name__:
 
     sky_args = args.add_argument_group('sky', 'Skymodel options')
     sky_args.add_argument('-l', dest='lum_file',
-                          help='Luminance file with header line removed')
+                          help='Luminance file with header lines removed')
 
     out_args = args.add_argument_group('out', 'Input/Output files')
     out_args.add_argument('infile', help='Input DEM')
