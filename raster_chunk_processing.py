@@ -828,7 +828,10 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     # compression Options
     jpeg_opts = ["compress=jpeg", "interleave=pixel", "photometric=ycbcr",
                  "tiled=yes", "jpeg_quality=90", "bigtiff=yes"]
-    lzw_opts = ["compress=lzw", "tiled=yes", "bigtiff=yes"]
+    #lzw_opts = ["compress=lzw", "tiled=yes", "bigtiff=yes"]
+    # Both lzw and deflate occasionally cause bad chunks in the final output;
+    # disabling until I can figure out why.
+    lzw_opts = ["tiled=yes", "bigtiff=yes"]
     # Use jpeg compression opts if three bands, otherwise lzw
     if bands == 3 and driver.LongName == 'GeoTIFF':
         opts = jpeg_opts
