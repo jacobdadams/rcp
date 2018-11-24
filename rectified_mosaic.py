@@ -67,6 +67,9 @@ def CreateFishnetIndices(ulx, uly, lrx, lry, dimension, pixels=False, pixel_size
     beyond the lrx/y point) with a spacing specified by 'dimension'.
     If pixels is true, assumes dimensions are in pixels and uses pixel_size.
     Otherwise, dimension is in raster coordinate system.
+
+    Returns:    list of tuples (x fishnet index, y fishnet index, chunk ulx,
+                chunk uly, chunk lrx, chunk lry)
     '''
 
     chunks = []
@@ -128,12 +131,15 @@ def CopyTilesFromRaster(root, rastername, fishnet, shp_layer, target_dir):
     projection = s_fh.GetProjection()
     band1 = s_fh.GetRasterBand(1)
     s_nodata = band1.GetNoDataValue()
+    if not s_nodata:
+        s_nodata = 256
     bands = s_fh.RasterCount
     raster_xmin = trans[0]
     raster_ymax = trans[3]
     raster_xwidth = trans[1]
     raster_yheight = trans[5]
-    driver = s_fh.GetDriver()
+    #driver = s_fh.GetDriver()
+    driver = gdal.GetDriverByName("GTiff")
     lzw_opts = ["compress=lzw", "tiled=yes"]
     band1 = None
 
@@ -253,7 +259,8 @@ def CopyTilesFromRaster(root, rastername, fishnet, shp_layer, target_dir):
             for band in range(1, bands + 1):
                 # Prep target band
                 t_band = t_fh.GetRasterBand(band)
-                t_band.SetNoDataValue(s_nodata)
+                if s_nodata:
+                    t_band.SetNoDataValue(s_nodata)
 
                 # Initialize slice array to nodata (for areas of the new chunk
                 # that are outside the source raster)
@@ -367,7 +374,8 @@ def TileRectifiedRasters(rectified_dir, shp_path, tiled_dir, fishnet_size):
     shp_driver = ogr.GetDriverByName('ESRI Shapefile')
     shp_ds = shp_driver.CreateDataSource(shp_path)
     srs = osr.SpatialReference()
-    srs.ImportFromEPSG(102742)
+    srs.ImportFromEPSG(32612)
+    #srs.ImportFromEPSG(102742)
     layer = shp_ds.CreateLayer('', srs, ogr.wkbPolygon)
     layer.CreateField(ogr.FieldDefn('raster', ogr.OFTString))
     layer.CreateField(ogr.FieldDefn('cell', ogr.OFTString))
@@ -430,14 +438,14 @@ def ReadChunkFromShapefile(shp_path):
 
 
 if "__main__" in __name__:
-    directory = r'e:\a_imagery\1981\1_rectified'
-    poly_shp = r'e:\a_imagery\1981\00fishnet.shp'
-    tile_dir = r'e:\a_imagery\1981\tiled'
-    csv_path = r'e:\a_imagery\1981\00cells.csv'
+    directory = r'c:\gis\data\usgs_topos\reproj'
+    poly_shp = r'c:\gis\data\usgs_topos\reproj\00fishnet.shp'
+    tile_dir = r'c:\gis\temp\tiled'
+    csv_path = r'c:\gis\data\usgs_topos\reproj\00cells.csv'
     # directory = r'f:\1978plats'
     # poly_shp = r'f:\1978plats\00fishnet.shp'
     # tile_dir = r'f:\1978plats\tiled'
-    fishnet_size = 750
+    fishnet_size = 500
     tile = True
 
     # Retile if needed; otherwise, just read the shapefile
