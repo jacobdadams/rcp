@@ -4,6 +4,7 @@ import os
 import warnings
 import csv
 import math
+import datetime
 
 
 def hillshade(in_array, az, alt, scale=False):
@@ -106,14 +107,14 @@ def shadows(in_array, az, alt, res):
     cols = in_array.shape[1]
     shadow_array = np.zeros(in_array.shape)
     max_elev = np.max(in_array)
-    max_distance = 1000
+    max_distance = 100.
 
     az = 90. - az  # convert from 0 = north, cw to 0 = east, ccw
 
     azrad = az * np.pi / 180.
     altrad = alt * np.pi / 180.
-    delta_j = math.cos(azrad) * res
-    delta_i = math.sin(azrad) * res
+    delta_j = math.cos(azrad) #* res
+    delta_i = -1. * math.sin(azrad) #* res
     tanaltrad = math.tan(altrad)
 
     for i in range(0, rows - 1):
@@ -162,7 +163,7 @@ def shadows(in_array, az, alt, res):
                     keep_going = False  # our next index would be out of bounds, we've reached the edge of the array
 
 
-                print("i:{}, j:{}; idx_i:{}, idx_j:{}; idx_distance:{}, critical_height:{}".format(i, j, idx_i, idx_j, idx_distance, critical_height))
+                print("i:{}, j:{}; idx_i:{}, idx_j:{}; idx_distance:{}, critical_height:{}, delta_i:{}, delta_j:{}".format(i, j, idx_i, idx_j, idx_distance, critical_height, delta_i, delta_j))
 
             shadow_array[i, j] = shadow  # assign shadow value to output array
             #print("{}, {}: {}".format(i, j, shadow))
@@ -174,7 +175,12 @@ def shadows(in_array, az, alt, res):
 # variables
 csv_path = r'C:\GIS\Data\Elevation\Uintahs\test2_nohdr.csv'
 in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest.tif'
-out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_shadows2.tif'
+out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_shadows4.tif'
+
+alt = 25.
+az = 222.
+
+start = datetime.datetime.now()
 
 gdal.UseExceptions()
 
@@ -210,7 +216,7 @@ s_fh = None
 print("Processing array")
 # sky = skymodel(s_data, lines)
 # Test is 225 az, 25 alt
-shad = shadows(s_data, 225, 25, cell_size)
+shad = shadows(s_data, az, alt, cell_size)
 
 out_array = shad
 
@@ -235,3 +241,6 @@ t_band.WriteArray(out_array)
 
 t_band = None
 t_fh = None
+
+end = datetime.datetime.now()
+print(end - start)
