@@ -114,6 +114,7 @@ def shadows(in_array, az, alt, res):
     altrad = alt * np.pi / 180.
     delta_j = math.cos(azrad) * res
     delta_i = math.sin(azrad) * res
+    tanaltrad = math.tan(altrad)
 
     for i in range(0, rows - 1):
         for j in range(0, cols - 1):
@@ -141,7 +142,7 @@ def shadows(in_array, az, alt, res):
                 # distance for elevation check is distance from cell centers (idx_i/j), not distance along the path
                 # critical height is the elevation that is directly in the path of the sun at given alt/az
                 idx_distance = math.sqrt((i - idx_i)**2 + (j - idx_j)**2)
-                critical_height = idx_distance * math.tan(altrad) * res + point_elev
+                critical_height = idx_distance * tanaltrad * res + point_elev
 
 
                 in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
@@ -160,7 +161,8 @@ def shadows(in_array, az, alt, res):
                 else:
                     keep_going = False  # our next index would be out of bounds, we've reached the edge of the array
 
-                print("i:{}, j:{}; idx_i:{}, idx_j:{}; idx_distance:{}, critical_height".format(i, j, idx_i, idx_j, idx_distance, critical_height))
+
+                print("i:{}, j:{}; idx_i:{}, idx_j:{}; idx_distance:{}, critical_height:{}".format(i, j, idx_i, idx_j, idx_distance, critical_height))
 
             shadow_array[i, j] = shadow  # assign shadow value to output array
             #print("{}, {}: {}".format(i, j, shadow))
