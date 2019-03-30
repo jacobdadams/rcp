@@ -107,7 +107,7 @@ def shadows(in_array, az, alt, res):
     cols = in_array.shape[1]
     shadow_array = np.zeros(in_array.shape)
     max_elev = np.max(in_array)
-    max_distance = 100.
+    max_distance = 1000.
 
     az = 90. - az  # convert from 0 = north, cw to 0 = east, ccw
 
@@ -143,12 +143,14 @@ def shadows(in_array, az, alt, res):
                 # distance for elevation check is distance from cell centers (idx_i/j), not distance along the path
                 # critical height is the elevation that is directly in the path of the sun at given alt/az
                 idx_distance = math.sqrt((i - idx_i)**2 + (j - idx_j)**2)
+                path_distance = math.sqrt((i - next_i)**2 + (j - next_j)**2)
                 critical_height = idx_distance * tanaltrad * res + point_elev
 
 
                 in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
                 in_height = critical_height < max_elev
-                in_distance = idx_distance * res < max_distance
+                in_distance = path_distance * res < max_distance
+                #print("{}, {}, {}".format(in_bounds, in_height, in_distance))
 
                 if in_bounds and in_height and in_distance:
                 # bounds check (array bounds, elevation check)
@@ -163,7 +165,7 @@ def shadows(in_array, az, alt, res):
                     keep_going = False  # our next index would be out of bounds, we've reached the edge of the array
 
 
-                print("i:{}, j:{}; idx_i:{}, idx_j:{}; idx_distance:{}, critical_height:{}, delta_i:{}, delta_j:{}".format(i, j, idx_i, idx_j, idx_distance, critical_height, delta_i, delta_j))
+                #print("i:{}, j:{}; idx_i:{}, idx_j:{}; idx_distance:{}, critical_height:{}, delta_i:{}, delta_j:{}".format(i, j, idx_i, idx_j, idx_distance, critical_height, delta_i, delta_j))
 
             shadow_array[i, j] = shadow  # assign shadow value to output array
             #print("{}, {}: {}".format(i, j, shadow))
@@ -175,7 +177,7 @@ def shadows(in_array, az, alt, res):
 # variables
 csv_path = r'C:\GIS\Data\Elevation\Uintahs\test2_nohdr.csv'
 in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest.tif'
-out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_shadows4.tif'
+out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_shadows5.tif'
 
 alt = 25.
 az = 222.
