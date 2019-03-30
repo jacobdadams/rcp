@@ -112,6 +112,8 @@ def shadows(in_array, az, alt, res):
 
     azrad = az * np.pi / 180.
     altrad = alt * np.pi / 180.
+    delta_j = math.cos(azrad) * res
+    delta_i = math.sin(azrad) * res
 
     for i in range(0, rows - 1):
         for j in range(0, cols - 1):
@@ -122,8 +124,8 @@ def shadows(in_array, az, alt, res):
             prev_j = j
             while keep_going:  # this inner loop loops through the possible values for each path
                 # Figure out next point along the path
-                delta_j = math.cos(azrad) * res
-                delta_i = math.sin(azrad) * res
+                # delta_j = math.cos(azrad) * res
+                # delta_i = math.sin(azrad) * res
                 next_i = prev_i + delta_i
                 next_j = prev_j + delta_j
                 # Update prev_i/j for next go-around
@@ -158,10 +160,10 @@ def shadows(in_array, az, alt, res):
                 else:
                     keep_going = False  # our next index would be out of bounds, we've reached the edge of the array
 
-                print("{}: {}, {}".format(idx_distance, critical_height, max_distance))
+                print("i:{}, j:{}; idx_i:{}, idx_j:{}; idx_distance:{}, critical_height".format(i, j, idx_i, idx_j, idx_distance, critical_height))
 
             shadow_array[i, j] = shadow  # assign shadow value to output array
-            # print("{}, {}: {}".format(i, j, shadow))
+            #print("{}, {}: {}".format(i, j, shadow))
 
 
     return shadow_array
