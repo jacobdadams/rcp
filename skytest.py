@@ -110,6 +110,9 @@ def shadows(in_array, az, alt, res):
 
     az = 90. - az  # convert from 0 = north, cw to 0 = east, ccw
 
+    azrad = az * np.pi / 180.
+    altrad = alt * np.pi / 180.
+
     for i in range(0, rows - 1):
         for j in range(0, cols - 1):
             keep_going = True
@@ -119,8 +122,8 @@ def shadows(in_array, az, alt, res):
             prev_j = j
             while keep_going:  # this inner loop loops through the possible values for each path
                 # Figure out next point along the path
-                delta_j = math.cos(az) * res
-                delta_i = math.sin(az) * res
+                delta_j = math.cos(azrad) * res
+                delta_i = math.sin(azrad) * res
                 next_i = prev_i + delta_i
                 next_j = prev_j + delta_j
                 # Update prev_i/j for next go-around
@@ -136,12 +139,12 @@ def shadows(in_array, az, alt, res):
                 # distance for elevation check is distance from cell centers (idx_i/j), not distance along the path
                 # critical height is the elevation that is directly in the path of the sun at given alt/az
                 idx_distance = math.sqrt((i - idx_i)**2 + (j - idx_j)**2)
-                critical_height = idx_distance * math.tan(alt)
+                critical_height = idx_distance * math.tan(altrad) * res + point_elev
 
 
                 in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
                 in_height = critical_height < max_elev
-                in_distance = idx_distance < max_distance
+                in_distance = idx_distance * res < max_distance
 
                 if in_bounds and in_height and in_distance:
                 # bounds check (array bounds, elevation check)
@@ -155,10 +158,10 @@ def shadows(in_array, az, alt, res):
                 else:
                     keep_going = False  # our next index would be out of bounds, we've reached the edge of the array
 
-                # print("{}, {}: {}".format(idx_i, idx_j, shadow))
+                print("{}: {}, {}".format(idx_distance, critical_height, max_distance))
 
             shadow_array[i, j] = shadow  # assign shadow value to output array
-            print("{}, {}: {}".format(i, j, shadow))
+            # print("{}, {}: {}".format(i, j, shadow))
 
 
     return shadow_array
