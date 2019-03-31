@@ -5,6 +5,7 @@ import warnings
 import csv
 import math
 import datetime
+import cProfile
 
 
 def hillshade(in_array, az, alt, scale=False):
@@ -65,7 +66,7 @@ def hillshade(in_array, az, alt, scale=False):
     return result
 
 
-def skymodel(in_array, lum_lines):
+def skymodel(in_array, lum_lines, cell_size):
     '''
     Creates a unique hillshade based on a skymodel, implmenting the method
     defined in Kennelly and Stewart (2014), A Uniform Sky Illumination Model to
@@ -85,16 +86,19 @@ def skymodel(in_array, lum_lines):
     if in_array.mean() == s_nodata:
         return skyshade
 
+    # Multiply by 5 per K & S
+    mult_array = in_array * 5
     # Loop through luminance file lines to calculate multiple hillshades
     for line in lum_lines:
         az = float(line[0])
         alt = float(line[1])
         weight = float(line[2])
-        # print("{}, {}, {}".format(az, alt, weight))
-        shade = hillshade(in_array, az=az, alt=alt, scale=False) * weight
-        # print(np.nanmean(shade))
-        # print(np.nanmean(wshade))
-        skyshade = skyshade + shade
+        print("shading...")
+        shade = hillshade(mult_array, az=az, alt=alt, scale=False) * weight
+        print("shadowing...")
+        shadowed = shadows(mult_array, az, alt, cell_size)
+        print("combining...")
+        skyshade = skyshade + shade*shadowed
         # print(np.nanmean(skyshade))
         shade = None
 
@@ -117,57 +121,99 @@ def shadows(in_array, az, alt, res):
     delta_i = -1. * math.sin(azrad)
     tanaltrad = math.tan(altrad)
 
-    mult_size = 1
-    max_steps = 10
+    mult_size = 5
+    max_steps = 5
 
     counter = 0
     max = rows * cols
 
-    for i in range(0, rows):
-        for j in range(0, cols):
-            # keep_going = True
+    # https://docs.scipy.org/doc/numpy/reference/arrays.nditer.html
+    it = np.nditer(in_array, flags=['multi_index'])
+    while not it.finished:
+        i = it.index[0]
+        j = it.index[1]
 
-            # counter += 1
-            # elapsed = datetime.datetime.now() - start
-            # print("{}, {}   {}".format(i, j, elapsed))
+        point_elev = it[0]  # the point we want to determine if in shadow
+        # start calculating next point from the source point
+        prev_i = i
+        prev_j = j
 
-            point_elev = in_array[i, j]  # the point we want to determine if in shadow
-            # start calculating next point from the source point
-            prev_i = i
-            prev_j = j
+        for p in range(0, max_steps):
+            # Figure out next point along the path
+            next_i = prev_i + delta_i * p * mult_size
+            next_j = prev_j + delta_j * p * mult_size
+            # Update prev_i/j for next go-around
+            prev_i = next_i
+            prev_j = next_j
 
-            # shadow = 1  # 0 if shadowed, 1 if not
+            # We need integar indexes for the array
+            idx_i = int(round(next_i))
+            idx_j = int(round(next_j))
 
-            for p in range(0, max_steps):
-                # Figure out next point along the path
-                next_i = prev_i + delta_i * p * mult_size
-                next_j = prev_j + delta_j * p * mult_size
-                # Update prev_i/j for next go-around
-                prev_i = next_i
-                prev_j = next_j
+            # distance for elevation check is distance in cells (idx_i/j), not distance along the path
+            # critical height is the elevation that is directly in the path of the sun at given alt/az
+            idx_distance = math.sqrt((i - idx_i)**2 + (j - idx_j)**2)
+            # path_distance = math.sqrt((i - next_i)**2 + (j - next_j)**2)
+            critical_height = idx_distance * tanaltrad * res + point_elev
 
-                # We need integar indexes for the array
-                idx_i = int(round(next_i))
-                idx_j = int(round(next_j))
+            in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
+            in_height = critical_height < max_elev
+            # in_distance = path_distance * res < max_distance
 
-                # distance for elevation check is distance in cells (idx_i/j), not distance along the path
-                # critical height is the elevation that is directly in the path of the sun at given alt/az
-                idx_distance = math.sqrt((i - idx_i)**2 + (j - idx_j)**2)
-                # path_distance = math.sqrt((i - next_i)**2 + (j - next_j)**2)
-                critical_height = idx_distance * tanaltrad * res + point_elev
-
-                in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
-                in_height = critical_height < max_elev
-                # in_distance = path_distance * res < max_distance
-
-                if in_bounds and in_height: # and in_distance:
-                    next_elev = in_array[idx_i, idx_j]
-                    if next_elev > point_elev and next_elev > critical_height:
-                        shadow_array[i, j] = 0
-                        print(p)
-                        break  # We're done with this point, move on to the next
-
+            if in_bounds and in_height: # and in_distance:
+                next_elev = in_array[idx_i, idx_j]
+                if next_elev > point_elev and next_elev > critical_height:
+                    shadow_array[i, j] = 0
+                    # print(p)
+                    break  # We're done with this point, move on to the next
+        it.iternext()
     return shadow_array
+
+    # for i in range(0, rows):
+    #     for j in range(0, cols):
+    #         # keep_going = True
+    #
+    #         # counter += 1
+    #         # elapsed = datetime.datetime.now() - start
+    #         # print("{}, {}   {}".format(i, j, elapsed))
+    #
+    #         point_elev = in_array[i, j]  # the point we want to determine if in shadow
+    #         # start calculating next point from the source point
+    #         prev_i = i
+    #         prev_j = j
+    #
+    #         # shadow = 1  # 0 if shadowed, 1 if not
+    #
+    #         for p in range(0, max_steps):
+    #             # Figure out next point along the path
+    #             next_i = prev_i + delta_i * p * mult_size
+    #             next_j = prev_j + delta_j * p * mult_size
+    #             # Update prev_i/j for next go-around
+    #             prev_i = next_i
+    #             prev_j = next_j
+    #
+    #             # We need integar indexes for the array
+    #             idx_i = int(round(next_i))
+    #             idx_j = int(round(next_j))
+    #
+    #             # distance for elevation check is distance in cells (idx_i/j), not distance along the path
+    #             # critical height is the elevation that is directly in the path of the sun at given alt/az
+    #             idx_distance = math.sqrt((i - idx_i)**2 + (j - idx_j)**2)
+    #             # path_distance = math.sqrt((i - next_i)**2 + (j - next_j)**2)
+    #             critical_height = idx_distance * tanaltrad * res + point_elev
+    #
+    #             in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
+    #             in_height = critical_height < max_elev
+    #             # in_distance = path_distance * res < max_distance
+    #
+    #             if in_bounds and in_height: # and in_distance:
+    #                 next_elev = in_array[idx_i, idx_j]
+    #                 if next_elev > point_elev and next_elev > critical_height:
+    #                     shadow_array[i, j] = 0
+    #                     # print(p)
+    #                     break  # We're done with this point, move on to the next
+    #
+    # return shadow_array
 
             # while keep_going:  # this inner loop loops through the possible values for each path
             #     # Figure out next point along the path
@@ -219,9 +265,9 @@ def shadows(in_array, az, alt, res):
 
 
 # variables
-csv_path = r'C:\GIS\Data\Elevation\Uintahs\test2_nohdr.csv'
+csv_path = r'C:\GIS\Data\Elevation\Uintahs\test10_nohdr.csv'
 in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest.tif'
-out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_shadows10x1_for.tif'
+out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_shadow5x5_profiled.tif'
 
 alt = 25.
 az = 222.
@@ -260,7 +306,11 @@ s_band = None
 s_fh = None
 
 print("Processing array")
-# sky = skymodel(s_data, lines)
+
+# shade = hillshade(s_data, az, alt)
+# shadowed = shadows(s_data, az, alt, cell_size)
+# mult = shade * shadowed
+# sky = skymodel(s_data, lines, cell_size)
 # Test is 225 az, 25 alt
 shad = shadows(s_data, az, alt, cell_size)
 
