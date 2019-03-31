@@ -105,31 +105,43 @@ def shadows(in_array, az, alt, res):
     # Rows = i = y values, cols = j = x values
     rows = in_array.shape[0]
     cols = in_array.shape[1]
-    shadow_array = np.zeros(in_array.shape)
+    shadow_array = np.ones(in_array.shape)  # init to 1 (not shadowed), change to 0 if shadowed
     max_elev = np.max(in_array)
-    max_distance = 1000.
+    # max_distance = 500.
 
     az = 90. - az  # convert from 0 = north, cw to 0 = east, ccw
 
     azrad = az * np.pi / 180.
     altrad = alt * np.pi / 180.
-    delta_j = math.cos(azrad) #* res
-    delta_i = -1. * math.sin(azrad) #* res
+    delta_j = math.cos(azrad)
+    delta_i = -1. * math.sin(azrad)
     tanaltrad = math.tan(altrad)
 
-    for i in range(0, rows - 1):
-        for j in range(0, cols - 1):
-            keep_going = True
+    mult_size = 1
+    max_steps = 10
+
+    counter = 0
+    max = rows * cols
+
+    for i in range(0, rows):
+        for j in range(0, cols):
+            # keep_going = True
+
+            # counter += 1
+            # elapsed = datetime.datetime.now() - start
+            # print("{}, {}   {}".format(i, j, elapsed))
+
             point_elev = in_array[i, j]  # the point we want to determine if in shadow
             # start calculating next point from the source point
             prev_i = i
             prev_j = j
-            while keep_going:  # this inner loop loops through the possible values for each path
+
+            # shadow = 1  # 0 if shadowed, 1 if not
+
+            for p in range(0, max_steps):
                 # Figure out next point along the path
-                # delta_j = math.cos(azrad) * res
-                # delta_i = math.sin(azrad) * res
-                next_i = prev_i + delta_i
-                next_j = prev_j + delta_j
+                next_i = prev_i + delta_i * p * mult_size
+                next_j = prev_j + delta_j * p * mult_size
                 # Update prev_i/j for next go-around
                 prev_i = next_i
                 prev_j = next_j
@@ -138,46 +150,78 @@ def shadows(in_array, az, alt, res):
                 idx_i = int(round(next_i))
                 idx_j = int(round(next_j))
 
-                shadow = 1  # 0 if shadowed, 1 if not
-
-                # distance for elevation check is distance from cell centers (idx_i/j), not distance along the path
+                # distance for elevation check is distance in cells (idx_i/j), not distance along the path
                 # critical height is the elevation that is directly in the path of the sun at given alt/az
                 idx_distance = math.sqrt((i - idx_i)**2 + (j - idx_j)**2)
-                path_distance = math.sqrt((i - next_i)**2 + (j - next_j)**2)
+                # path_distance = math.sqrt((i - next_i)**2 + (j - next_j)**2)
                 critical_height = idx_distance * tanaltrad * res + point_elev
-
 
                 in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
                 in_height = critical_height < max_elev
-                in_distance = path_distance * res < max_distance
-                #print("{}, {}, {}".format(in_bounds, in_height, in_distance))
+                # in_distance = path_distance * res < max_distance
 
-                if in_bounds and in_height and in_distance:
-                # bounds check (array bounds, elevation check)
-                # if idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols and critical_height < max_elev:
+                if in_bounds and in_height: # and in_distance:
                     next_elev = in_array[idx_i, idx_j]
-                    if next_elev > point_elev:  # only check if the next elev is greater than the point elev
-                        if next_elev > critical_height:
-                            shadow = 0
-                            keep_going = False  # don't bother continuing to check
-
-                else:
-                    keep_going = False  # our next index would be out of bounds, we've reached the edge of the array
-
-
-                #print("i:{}, j:{}; idx_i:{}, idx_j:{}; idx_distance:{}, critical_height:{}, delta_i:{}, delta_j:{}".format(i, j, idx_i, idx_j, idx_distance, critical_height, delta_i, delta_j))
-
-            shadow_array[i, j] = shadow  # assign shadow value to output array
-            #print("{}, {}: {}".format(i, j, shadow))
-
+                    if next_elev > point_elev and next_elev > critical_height:
+                        shadow_array[i, j] = 0
+                        print(p)
+                        break  # We're done with this point, move on to the next
 
     return shadow_array
+
+            # while keep_going:  # this inner loop loops through the possible values for each path
+            #     # Figure out next point along the path
+            #     # delta_j = math.cos(azrad) * res
+            #     # delta_i = math.sin(azrad) * res
+            #     next_i = prev_i + delta_i
+            #     next_j = prev_j + delta_j
+            #     # Update prev_i/j for next go-around
+            #     prev_i = next_i
+            #     prev_j = next_j
+            #
+            #     # We need integar indexes for the array
+            #     idx_i = int(round(next_i))
+            #     idx_j = int(round(next_j))
+            #
+            #     shadow = 1  # 0 if shadowed, 1 if not
+            #
+            #     # distance for elevation check is distance from cell centers (idx_i/j), not distance along the path
+            #     # critical height is the elevation that is directly in the path of the sun at given alt/az
+            #     idx_distance = math.sqrt((i - idx_i)**2 + (j - idx_j)**2)
+            #     path_distance = math.sqrt((i - next_i)**2 + (j - next_j)**2)
+            #     critical_height = idx_distance * tanaltrad * res + point_elev
+            #
+            #
+            #     in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
+            #     in_height = critical_height < max_elev
+            #     in_distance = path_distance * res < max_distance
+            #     #print("{}, {}, {}".format(in_bounds, in_height, in_distance))
+            #
+            #     if in_bounds and in_height and in_distance:
+            #     # bounds check (array bounds, elevation check)
+            #     # if idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols and critical_height < max_elev:
+            #         next_elev = in_array[idx_i, idx_j]
+            #         if next_elev > point_elev:  # only check if the next elev is greater than the point elev
+            #             if next_elev > critical_height:
+            #                 shadow = 0
+            #                 keep_going = False  # don't bother continuing to check
+            #
+            #     else:
+            #         keep_going = False  # our next index would be out of bounds, we've reached the edge of the array
+            #
+            #
+            #     #print("i:{}, j:{}; idx_i:{}, idx_j:{}; idx_distance:{}, critical_height:{}, delta_i:{}, delta_j:{}".format(i, j, idx_i, idx_j, idx_distance, critical_height, delta_i, delta_j))
+            #
+            # shadow_array[i, j] = shadow  # assign shadow value to output array
+            # #print("{}, {}: {}".format(i, j, shadow))
+
+    # return shadow_array
 
 
 # variables
 csv_path = r'C:\GIS\Data\Elevation\Uintahs\test2_nohdr.csv'
 in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest.tif'
-out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_shadows5.tif'
+out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_shadows10x1_for.tif'
 
 alt = 25.
 az = 222.
