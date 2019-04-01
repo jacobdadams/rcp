@@ -5,11 +5,13 @@
 #            etc) to arbitrarily large rasters by chunking it out into smaller
 #            pieces and processes in parallel (if desired)
 #  Author:   Jacob Adams, jacob.adams@cachecounty.org
+#            Jacob Adams, jacob.dan.adams@gmail.com
 #
 #*****************************************************************************
 # MIT License
 #
 # Copyright (c) 2018 Cache County
+# Copyright (c) 2019 Jacob Adams
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -30,8 +32,12 @@
 # THE SOFTWARE.
 #*****************************************************************************
 
-# Version:  1.0.0
-# Date      14 Aug 2018
+# Version:  1.9.0
+# Date      30 March 2019
+
+# Version History
+# 1.0.0:    Original release at Cache County
+# 1.9.0:    First fix of skymodel shadowing
 
 # TODO:
 #   Merge clahe kernel size arg with general kernel radius arg
@@ -52,6 +58,7 @@ import argparse
 import traceback
 import math
 import multiprocessing as mp
+import numba
 from astropy.convolution import convolve_fft
 from skimage import exposure
 from osgeo import gdal, gdal_array
@@ -111,6 +118,13 @@ def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
             row = " ".join("{0}".format(n) for n in in_array[i, :])
             f.write(row)
             f.write("\n")
+
+
+def stretch_scale(in_array, start_elev, max_elev, z, sigma, radius):
+    '''
+    Scales an elevation raster based on the gaussian average neighborhood elevation
+    '''
+    raise NotImplementedError
 
 
 def blur_mean(in_array, radius):
@@ -389,15 +403,17 @@ def skymodel(in_array, lum_lines):
     if in_array.mean() == s_nodata:
         return skyshade
 
+    mult = in_array * 5
+
     # Loop through luminance file lines to calculate multiple hillshades
     for line in lum_lines:
         az = float(line[0])
         alt = float(line[1])
         weight = float(line[2])
+        shade = hillshade(mult, az=az, alt=alt, scale=False) * weight
+        shadowed = shadows(mult, az, alt, cell_size)
+        skyshade = skyshade + shade * shadowed
 
-        shade = hillshade(in_array, az=az, alt=alt, scale=False) * weight
-
-        skyshade = skyshade + shade
         shade = None
 
     return skyshade
@@ -418,6 +434,62 @@ def skymodel(in_array, lum_lines):
     # scaled = (newmax - newmin)*(skyshade - oldmin) / (oldmax - oldmin) + newmin
     #
     # return scaled
+
+
+@numba.jit(nopython=True)
+def shadows(in_array, az, alt, res):
+    # Rows = i = y values, cols = j = x values
+    rows = in_array.shape[0]
+    cols = in_array.shape[1]
+    shadow_array = np.ones(in_array.shape)  # init to 1 (not shadowed), change to 0 if shadowed
+    max_elev = np.max(in_array)
+
+    az = 90. - az  # convert from 0 = north, cw to 0 = east, ccw
+
+    azrad = az * np.pi / 180.
+    altrad = alt * np.pi / 180.
+    delta_j = math.cos(azrad)
+    delta_i = -1. * math.sin(azrad)
+    tanaltrad = math.tan(altrad)
+
+    mult_size = 1
+    max_steps = 50
+
+    for i in range(0, rows):
+        for j in range(0, cols):
+
+            point_elev = in_array[i, j]  # the point we want to determine if in shadow
+            # start calculating next point from the source point
+            prev_i = i
+            prev_j = j
+
+            for p in range(0, max_steps):
+                # Figure out next point along the path
+                next_i = prev_i + delta_i * p * mult_size
+                next_j = prev_j + delta_j * p * mult_size
+                # Update prev_i/j for next go-around
+                prev_i = next_i
+                prev_j = next_j
+
+                # We need integar indexes for the array
+                idx_i = int(round(next_i))
+                idx_j = int(round(next_j))
+
+                # distance for elevation check is distance in cells (idx_i/j), not distance along the path
+                # critical height is the elevation that is directly in the path of the sun at given alt/az
+                idx_distance = math.sqrt((i - idx_i)**2 + (j - idx_j)**2)
+                critical_height = idx_distance * tanaltrad * res + point_elev
+
+                in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
+                in_height = critical_height < max_elev
+
+                if in_bounds and in_height:
+                    next_elev = in_array[idx_i, idx_j]
+                    if next_elev > point_elev and next_elev > critical_height:
+                        shadow_array[i, j] = 0
+                        break  # We're done with this point, move on to the next
+
+    return shadow_array
 
 
 def TPI(in_array, radius):
