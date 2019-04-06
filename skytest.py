@@ -13,6 +13,7 @@ from memory_profiler import profile
 # Notes:
 # Shading is memory intensive (lots of copies of the array), Shadowing is processor intensive.
 # Numba jit'ing the monolithic skymodel doesn't speed it up by much- just jit'ing shade is fine.
+#   putting it into a single loop slows it down even further- 34s vs 24s for non-monolithic
 # The "return shaded*255" line holds onto a lot of memory- put the *255 in the body of the method.
 
 def sizeof_fmt(num, suffix='B'):
@@ -164,8 +165,7 @@ def skymodel_numba(in_array, lum_lines, res, nodata):#, cell_size):
         weight = lum_lines[l, 2]
         # print("shading...")
 
-        # shade = hillshade(in_array, az, alt, res, nodata) * weight
-        #--- HILLSHADE ---
+        # Hillshade variables
         nan_array = np.where(in_array == nodata, np.nan, in_array)
 
         # Initialize shaded array to 0s
@@ -177,16 +177,31 @@ def skymodel_numba(in_array, lum_lines, res, nodata):#, cell_size):
         azrad = az * np.pi / 180.
         altrad = alt * np.pi / 180.
 
-        sinalt = np.sin(altrad)
-        cosaz = np.cos(azrad)
-        cosalt = np.cos(altrad)
-        sinaz = np.sin(azrad)
+        sinalt = math.sin(altrad)
+        cosaz = math.cos(azrad)
+        cosalt = math.cos(altrad)
+        sinaz = math.sin(azrad)
 
         rows = nan_array.shape[0]
         cols = nan_array.shape[1]
 
+        # Shadow variables
+        delta_j = math.cos(azrad)
+        delta_i = -1. * math.sin(azrad)
+        tanaltrad = math.tan(altrad)
+
+        mult_size = 1
+        max_steps = 200
+
+        shadow_array = np.ones(in_array.shape)  # init to 1 (not shadowed), change to 0 if shadowed
+        max_elev = np.max(in_array)
+
+        # Just loop once, doing both hillshade and shadow
         for i in range(1, rows-1):  # ignoring edges right now by subsetting
             for j in range(1, cols-1):
+
+                # ===================
+                # Hillshade algorithm
                 window = nan_array[i-1:i+2, j-1:j+2].flatten()
 
                 x = ((window[2] + 2. * window[5] + window[8]) -
@@ -201,26 +216,8 @@ def skymodel_numba(in_array, lum_lines, res, nodata):#, cell_size):
 
                 shaded[i,j] = shade * 255
 
-        shaded *= weight
-
-        # print("shadowing...")
-        #--- SHADOWS ---
-        shadow_array = np.ones(in_array.shape)  # init to 1 (not shadowed), change to 0 if shadowed
-        max_elev = np.max(in_array)
-        # max_distance = 500.
-
-        az = 90. - az  # convert from 0 = north, cw to 0 = east, ccw
-
-        azrad = az * np.pi / 180.
-        altrad = alt * np.pi / 180.
-        delta_j = math.cos(azrad)
-        delta_i = -1. * math.sin(azrad)
-        tanaltrad = math.tan(altrad)
-
-        mult_size = 1
-        max_steps = 200
-        for i in range(0, rows):
-            for j in range(0, cols):
+                # ================
+                # Shadow algorithm
                 point_elev = in_array[i, j]  # the point we want to determine if in shadow
                 # start calculating next point from the source point
                 prev_i = i
@@ -256,6 +253,63 @@ def skymodel_numba(in_array, lum_lines, res, nodata):#, cell_size):
                             shadow_array[i, j] = 0
                             # print(p)
                             break  # We're done with this point, move on to the next
+
+        # weight the shaded array (mult is cummutative, same as (shadow*shade)*weight)
+        shaded *= weight
+
+        # # print("shadowing...")
+        # #--- SHADOWS ---
+        # shadow_array = np.ones(in_array.shape)  # init to 1 (not shadowed), change to 0 if shadowed
+        # max_elev = np.max(in_array)
+        # # max_distance = 500.
+        #
+        # az = 90. - az  # convert from 0 = north, cw to 0 = east, ccw
+        #
+        # azrad = az * np.pi / 180.
+        # altrad = alt * np.pi / 180.
+        # delta_j = math.cos(azrad)
+        # delta_i = -1. * math.sin(azrad)
+        # tanaltrad = math.tan(altrad)
+        #
+        # mult_size = 1
+        # max_steps = 200
+        # for i in range(0, rows):
+        #     for j in range(0, cols):
+        #         point_elev = in_array[i, j]  # the point we want to determine if in shadow
+        #         # start calculating next point from the source point
+        #         prev_i = i
+        #         prev_j = j
+        #
+        #         # shadow = 1  # 0 if shadowed, 1 if not
+        #
+        #         for p in range(0, max_steps):
+        #             # Figure out next point along the path
+        #             next_i = prev_i + delta_i * p * mult_size
+        #             next_j = prev_j + delta_j * p * mult_size
+        #             # Update prev_i/j for next go-around
+        #             prev_i = next_i
+        #             prev_j = next_j
+        #
+        #             # We need integar indexes for the array
+        #             idx_i = int(round(next_i))
+        #             idx_j = int(round(next_j))
+        #
+        #             # distance for elevation check is distance in cells (idx_i/j), not distance along the path
+        #             # critical height is the elevation that is directly in the path of the sun at given alt/az
+        #             idx_distance = math.sqrt((i - idx_i)**2 + (j - idx_j)**2)
+        #             # path_distance = math.sqrt((i - next_i)**2 + (j - next_j)**2)
+        #             critical_height = idx_distance * tanaltrad * res + point_elev
+        #
+        #             in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
+        #             in_height = critical_height < max_elev
+        #             # in_distance = path_distance * res < max_distance
+        #
+        #             if in_bounds and in_height: # and in_distance:
+        #                 next_elev = in_array[idx_i, idx_j]
+        #                 if next_elev > point_elev and next_elev > critical_height:
+        #                     shadow_array[i, j] = 0
+        #                     # print(p)
+        #                     break  # We're done with this point, move on to the next
 
         #shadowed = shadows(in_array, az, alt, res, nodata)
         print("combining...")
@@ -310,7 +364,7 @@ def skymodel(in_array, lum_lines, res, nodata):#, cell_size):
 
 
 @numba.jit("u1[:,:](f4[:,:],f8,f8,f8,f8)", nopython=True)
-def shadows(in_array, az, alt, res, nodata):
+    def shadows(in_array, az, alt, res, nodata):
     # Rows = i = y values, cols = j = x values
     rows = in_array.shape[0]
     cols = in_array.shape[1]
@@ -326,12 +380,14 @@ def shadows(in_array, az, alt, res, nodata):
     delta_i = -1. * math.sin(azrad)
     tanaltrad = math.tan(altrad)
 
-    mult_size = 4
-    max_steps = 40
+    # Mult size is in array units, not georef units
+    mult_size = 1
+    max_steps = 200
 
     counter = 0
     max = rows * cols
 
+    # numba jit w/for loop is faster than nditer
     # # https://docs.scipy.org/doc/numpy/reference/arrays.nditer.html
     # it = np.nditer(in_array, flags=['multi_index'])
     # while not it.finished:
@@ -473,9 +529,9 @@ def shadows(in_array, az, alt, res, nodata):
 
 # variables
 csv_path = r'C:\GIS\Data\Elevation\Uintahs\test10_nohdr.csv'
-#in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest.tif'
-in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\uintahs_fft60_sub.tif'
-out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\uintahs_fft60_sub_sky4x40_test10_sizetest.tif'
+in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest.tif'
+# in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\uintahs_fft60_sub.tif'
+out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_sky_monolithic_singleloop_test10_2.tif'
 
 alt = 45.
 az = 315.
@@ -528,8 +584,8 @@ print("Processing array")
 #shade = hillshade_numba(s_data, az, alt, cell_size)
 # shadowed = shadows(s_data, az, alt, cell_size)
 # mult = shade * shadowed
-# sky = skymodel_numba(s_data, nplines, cell_size, s_nodata)
-sky = skymodel(s_data[:], lines, cell_size, s_nodata)
+sky = skymodel_numba(s_data, nplines, cell_size, s_nodata)
+# sky = skymodel(s_data[:], lines, cell_size, s_nodata)
 # Test is 225 az, 25 alt
 # shad = shadows(s_data, az, alt, cell_size)
 
