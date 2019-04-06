@@ -364,7 +364,7 @@ def skymodel(in_array, lum_lines, res, nodata):#, cell_size):
 
 
 @numba.jit("u1[:,:](f4[:,:],f8,f8,f8,f8)", nopython=True)
-    def shadows(in_array, az, alt, res, nodata):
+def shadows(in_array, az, alt, res, nodata):
     # Rows = i = y values, cols = j = x values
     rows = in_array.shape[0]
     cols = in_array.shape[1]
@@ -376,8 +376,8 @@ def skymodel(in_array, lum_lines, res, nodata):#, cell_size):
 
     azrad = az * np.pi / 180.
     altrad = alt * np.pi / 180.
-    delta_j = math.cos(azrad)
-    delta_i = -1. * math.sin(azrad)
+    delta_j = math.cos(azrad)  # these are switched sin for cos because of 90-az above
+    delta_i = -1. * math.sin(azrad)  # these are switched sin for cos because of 90-az above
     tanaltrad = math.tan(altrad)
 
     # Mult size is in array units, not georef units
@@ -447,13 +447,11 @@ def skymodel(in_array, lum_lines, res, nodata):#, cell_size):
 
             # shadow = 1  # 0 if shadowed, 1 if not
 
-            for step in range(0, max_steps):
+            for step in range(1, max_steps):  # start at a step of 1- a point cannot be shadowed by itself
                 # Figure out next point along the path
-                next_i = prev_i + delta_i * step * mult_size
-                next_j = prev_j + delta_j * step * mult_size
-                # Update prev_i/j for next go-around
-                prev_i = next_i
-                prev_j = next_j
+                # use i/j + delta_i/j instead of prev_i/j + delta_i/j because step takes care of progression for us
+                next_i = i + delta_i * step * mult_size
+                next_j = j + delta_j * step * mult_size
 
                 # We need integar indexes for the array
                 idx_i = int(round(next_i))
@@ -468,8 +466,14 @@ def skymodel(in_array, lum_lines, res, nodata):#, cell_size):
                 in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
                 in_height = critical_height < max_elev
                 # in_distance = path_distance * res < max_distance
+                #print(in_bounds)
 
-                if in_bounds and in_height: # and in_distance:
+                # set to shaded if out of bounds
+                # if in_bounds is False:
+                #     shadow_array[i,j] = 0
+                #     break
+
+                if in_bounds and in_height:  # and in_distance:
                     next_elev = in_array[idx_i, idx_j]
                     if next_elev > point_elev and next_elev > critical_height:
                         shadow_array[i, j] = 0
@@ -531,7 +535,7 @@ def skymodel(in_array, lum_lines, res, nodata):#, cell_size):
 csv_path = r'C:\GIS\Data\Elevation\Uintahs\test10_nohdr.csv'
 in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest.tif'
 # in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\uintahs_fft60_sub.tif'
-out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_sky_monolithic_singleloop_test10_2.tif'
+out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_sky_shadowedgetest_180_25_stepjusti.tif'
 
 alt = 45.
 az = 315.
@@ -584,8 +588,9 @@ print("Processing array")
 #shade = hillshade_numba(s_data, az, alt, cell_size)
 # shadowed = shadows(s_data, az, alt, cell_size)
 # mult = shade * shadowed
-sky = skymodel_numba(s_data, nplines, cell_size, s_nodata)
-# sky = skymodel(s_data[:], lines, cell_size, s_nodata)
+#sky = skymodel_numba(s_data, nplines, cell_size, s_nodata)
+lines = [[180., 25., 1.]]
+sky = skymodel(s_data[:], lines, cell_size, s_nodata)
 # Test is 225 az, 25 alt
 # shad = shadows(s_data, az, alt, cell_size)
 
