@@ -342,8 +342,8 @@ def hillshade(in_array, az, alt, scale=False):
     # Create new array wsith s_nodata values set to np.nan (for edges)
     nan_array = np.where(in_array == s_nodata, np.nan, in_array)
 
-    x = np.zeros(nan_array.shape)
-    y = np.zeros(nan_array.shape)
+    # x = np.zeros(nan_array.shape)
+    # y = np.zeros(nan_array.shape)
 
     # Conversion between mathematical and nautical azimuth
     az = 90. - az
@@ -359,28 +359,29 @@ def hillshade(in_array, az, alt, scale=False):
     sinaz = np.sin(azrad)
     xx_plus_yy = x * x + y * y
     alpha = y * cosaz * cosalt - x * sinaz * cosalt
-    shaded = (sinalt - alpha) / np.sqrt(1 + xx_plus_yy)
-
+    x = None
+    y = None
+    shaded = (sinalt - alpha) / np.sqrt(1 + xx_plus_yy) * 255
     # scale from 0-1 to 0-255
-    shaded255 = shaded * 255
+    return shaded  #* 255
 
-    if scale:
-        # Scale to 1-255 (stretches min value to 1, max to 255)
-        # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
-        # Supressing runtime warnings due to NaNs (they just get hidden by
-        # NoData masks in the supper_array rebuild anyways)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=RuntimeWarning)
-            newmax = 255
-            newmin = 1
-            oldmax = np.nanmax(shaded255)
-            oldmin = np.nanmin(shaded255)
-
-        result = (newmax-newmin) * (shaded255-oldmin) / (oldmax-oldmin) + newmin
-    else:
-        result = shaded255
-
-    return result
+    # if scale:
+    #     # Scale to 1-255 (stretches min value to 1, max to 255)
+    #     # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
+    #     # Supressing runtime warnings due to NaNs (they just get hidden by
+    #     # NoData masks in the supper_array rebuild anyways)
+    #     with warnings.catch_warnings():
+    #         warnings.simplefilter("ignore", category=RuntimeWarning)
+    #         newmax = 255
+    #         newmin = 1
+    #         oldmax = np.nanmax(shaded255)
+    #         oldmin = np.nanmin(shaded255)
+    #
+    #     result = (newmax-newmin) * (shaded255-oldmin) / (oldmax-oldmin) + newmin
+    # else:
+    #     result = shaded255
+    #
+    # return result
 
 
 def skymodel(in_array, lum_lines):
@@ -403,16 +404,17 @@ def skymodel(in_array, lum_lines):
     if in_array.mean() == s_nodata:
         return skyshade
 
-    mult = in_array * 5
+    # mult = in_array * 5
+    in_array *= 5
 
     # Loop through luminance file lines to calculate multiple hillshades
     for line in lum_lines:
         az = float(line[0])
         alt = float(line[1])
         weight = float(line[2])
-        shade = hillshade(mult, az=az, alt=alt, scale=False) * weight
-        shadowed = shadows(mult, az, alt, cell_size)
-        skyshade = skyshade + shade * shadowed
+        shade = hillshade(in_array, az=az, alt=alt, scale=False) * weight
+        shadowed = shadows(in_array, az, alt, cell_size)
+        skyshade += shade * shadowed
 
         shade = None
 
@@ -436,7 +438,7 @@ def skymodel(in_array, lum_lines):
     # return scaled
 
 
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def shadows(in_array, az, alt, res):
     # Rows = i = y values, cols = j = x values
     rows = in_array.shape[0]
@@ -453,27 +455,26 @@ def shadows(in_array, az, alt, res):
     tanaltrad = math.tan(altrad)
 
     mult_size = 1
-    max_steps = 50
+    max_steps = 150
 
     for i in range(0, rows):
         for j in range(0, cols):
 
             point_elev = in_array[i, j]  # the point we want to determine if in shadow
             # start calculating next point from the source point
-            prev_i = i
-            prev_j = j
 
             for p in range(0, max_steps):
                 # Figure out next point along the path
-                next_i = prev_i + delta_i * p * mult_size
-                next_j = prev_j + delta_j * p * mult_size
-                # Update prev_i/j for next go-around
-                prev_i = next_i
-                prev_j = next_j
+                next_i = i + delta_i * p * mult_size
+                next_j = j + delta_j * p * mult_size
 
                 # We need integar indexes for the array
                 idx_i = int(round(next_i))
                 idx_j = int(round(next_j))
+
+                # No need to continue if it's already shadowed
+                if shadow_array[i, j] == 0:
+                    break
 
                 # distance for elevation check is distance in cells (idx_i/j), not distance along the path
                 # critical height is the elevation that is directly in the path of the sun at given alt/az
@@ -955,7 +956,8 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     # if there's only one chunk, set overlap to 0 so that read indeces
     # aren't out of bounds
     if total_chunks > 1:
-        f2 = 2 * overlap
+        # f2 = 2 * overlap
+        f2 = overlap
     else:
         f2 = 0
 
