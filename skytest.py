@@ -387,7 +387,7 @@ def shadows(in_array, az, alt, res, nodata):
 
     # Mult size is in array units, not georef units
     mult_size = .5
-    max_steps = 300
+    max_steps = 600
 
     counter = 0
     max = rows * cols
@@ -604,7 +604,7 @@ def shadows(in_array, az, alt, res, nodata):
 csv_path = r'C:\GIS\Data\Elevation\Uintahs\test2_nohdr.csv'
 in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest.tif'
 # in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\uintahs_fft60_sub.tif'
-out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_sky_1x300_test2_precom_round.tif'
+out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_sky_1x600_test2_precom_maxcalc .tif'
 
 alt = 45.
 az = 315.
