@@ -383,10 +383,11 @@ def shadows(in_array, az, alt, res, nodata):
     delta_j = math.cos(azrad)  # these are switched sin for cos because of 90-az above
     delta_i = -1. * math.sin(azrad)  # these are switched sin for cos because of 90-az above
     tanaltrad = math.tan(altrad)
+    oneoverres = 1. / res
 
     # Mult size is in array units, not georef units
     mult_size = .5
-    max_steps = 150
+    max_steps = 300
 
     counter = 0
     max = rows * cols
@@ -438,7 +439,7 @@ def shadows(in_array, az, alt, res, nodata):
     already_shadowed = 0
 
     # precompute idx distances
-    ids = []
+    distances = []
     for d in range(1, max_steps):
         # # Figure out next point along the path
         # # use i/j + delta_i/j instead of prev_i/j + delta_i/j because step takes care of progression for us
@@ -451,9 +452,28 @@ def shadows(in_array, az, alt, res, nodata):
         #
         # # distance for elevation check is distance in cells (idx_i/j), not distance along the path
         # # critical height is the elevation that is directly in the path of the sun at given alt/az
+        #
+        # idx_distance = math.sqrt((idx_i)**2 + (idx_j)**2)
+        # ids.append(idx_distance)
 
-        idx_distance = math.sqrt((idx_i)**2 + (idx_j)**2)
-        ids.append(idx_distance)
+        # distance is just d * resolution (only going in 1-array-unit steps)
+        distance = d * res
+        step_height = distance * tanaltrad
+        i_distance = delta_i * d
+        j_distance = delta_j * d
+        distances.append((step_height, i_distance, j_distance))
+
+        # # calculate distance in georeff units, i, and j values in array units
+        # i_distance = delta_i * d * mult_size
+        # j_distance = delta_j * d * mult_size
+        # y_distance = i_distance * res
+        # x_distance = j_distance * res
+        # y_dist_sq = y_distance**2
+        # x_dist_sq = x_distance**2
+        #
+        # # total_distance = math.sqrt((j_distance*res)**2 + (i_distance*res)**2) * tanaltrad
+        # total_distance = math.sqrt(x_dist_sq + y_dist_sq) * tanaltrad
+        # distances.append((total_distance, i_distance, j_distance))
 
     for i in range(0, rows):
         for j in range(0, cols):
@@ -467,6 +487,9 @@ def shadows(in_array, az, alt, res, nodata):
 
             # start calculating next point from the source point
             # shadow = 1  # 0 if shadowed, 1 if not
+
+
+
             for step in range(1, max_steps):  # start at a step of 1- a point cannot be shadowed by itself
 
                 iterations += 1
@@ -474,6 +497,7 @@ def shadows(in_array, az, alt, res, nodata):
                 # No need to continue if it's already shadowed
                 if shadow_array[i, j] == 0:
                     already_shadowed += 1
+                    # print("shadow break")
                     break
 
                 # # Figure out next point along the path
@@ -491,7 +515,13 @@ def shadows(in_array, az, alt, res, nodata):
                 # # path_distance = math.sqrt((i - next_i)**2 + (j - next_j)**2)
                 # critical_height = idx_distance * tanaltrad * res + point_elev
 
-                critical_height = ids[step-1] * tanaltrad * res + point_elev
+                # critical height, distances[][0] is already in georeffed units
+                # [step-1] because distance[0] is already one step away from the start
+                critical_height = distances[step-1][0] + point_elev
+
+                # idx_i/j are indices of array corresponding to current position + y/x distances
+                idx_i = int(round(i + distances[step-1][1]))
+                idx_j = int(round(j + distances[step-1][2]))
 
                 in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
                 in_height = critical_height < max_elev
@@ -507,7 +537,13 @@ def shadows(in_array, az, alt, res, nodata):
                     next_elev = in_array[idx_i, idx_j]
                     if next_elev > point_elev and next_elev > critical_height:
                         shadow_array[i, j] = 0
-                        # print(p)
+
+                        # set all array indices in between our found shadowing index and the source index to shadowed
+                        for step2 in range(1, step):
+                            i2 = int(round(i + distances[step2-1][1]))
+                            j2 = int(round(j + distances[step2-1][2]))
+                            shadow_array[i2, j2] = 0
+                        # #print(step)
                         break  # We're done with this point, move on to the next
 
     print(max)
@@ -568,7 +604,7 @@ def shadows(in_array, az, alt, res, nodata):
 csv_path = r'C:\GIS\Data\Elevation\Uintahs\test2_nohdr.csv'
 in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest.tif'
 # in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\uintahs_fft60_sub.tif'
-out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_sky_1x150_test2_precomidxdist.tif'
+out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_sky_1x300_test2_precom_round.tif'
 
 alt = 45.
 az = 315.
