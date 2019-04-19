@@ -3,14 +3,17 @@ import numpy as np
 import math
 
 cc = CC('shadowing')
+#cc.verbose = True
+#print(cc.target_cpu)
+cc.target_cpu = "host"
 
 
-@cc.export('shadows', "u1[:,:](f4[:,:],f8,f8,f8)")
-def shadows(in_array, az, alt, res):
+@cc.export('shadows', "u1[:,:](f8[:,:],f8,f8,f8,u4)")
+def shadows(in_array, az, alt, res, overlap):
     # Rows = i = y values, cols = j = x values
     rows = in_array.shape[0]
     cols = in_array.shape[1]
-    shadow_array = np.ones(in_array.shape)  # init to 1 (not shadowed), change to 0 if shadowed
+    shadow_array = np.ones(in_array.shape, dtype=np.uint8)  # init to 1 (not shadowed), change to 0 if shadowed
     max_elev = np.max(in_array)
 
     az = 90. - az  # convert from 0 = north, cw to 0 = east, ccw
@@ -22,31 +25,45 @@ def shadows(in_array, az, alt, res):
     tanaltrad = math.tan(altrad)
 
     mult_size = 1
-    max_steps = 150
+    max_steps = 600
 
-    for i in range(0, rows):
-        for j in range(0, cols):
+    already_shadowed = 0
+
+    # precompute idx distances
+    distances = []
+    for d in range(1, max_steps):
+        distance = d * res
+        step_height = distance * tanaltrad
+        i_distance = delta_i * d
+        j_distance = delta_j * d
+        distances.append((step_height, i_distance, j_distance))
+
+    # Only compute shadows for the actual chunk area in a super_array
+    # We don't care about the overlap areas in the output array, they just get
+    # overwritten by the nodata value
+    y_start = overlap
+    y_end = rows - overlap
+    x_start = overlap
+    x_end = rows - overlap
+
+    for i in range(y_start, y_end):
+        for j in range(x_start, x_end):
 
             point_elev = in_array[i, j]  # the point we want to determine if in shadow
-            # start calculating next point from the source point
 
-            for p in range(0, max_steps):
-                # Figure out next point along the path
-                next_i = i + delta_i * p * mult_size
-                next_j = j + delta_j * p * mult_size
-
-                # We need integar indexes for the array
-                idx_i = int(round(next_i))
-                idx_j = int(round(next_j))
+            for step in range(1, max_steps):  # start at a step of 1- a point cannot be shadowed by itself
 
                 # No need to continue if it's already shadowed
                 if shadow_array[i, j] == 0:
+                    already_shadowed += 1
+                    # print("shadow break")
                     break
 
-                # distance for elevation check is distance in cells (idx_i/j), not distance along the path
-                # critical height is the elevation that is directly in the path of the sun at given alt/az
-                idx_distance = math.sqrt((i - idx_i)**2 + (j - idx_j)**2)
-                critical_height = idx_distance * tanaltrad * res + point_elev
+                critical_height = distances[step-1][0] + point_elev
+
+                # idx_i/j are indices of array corresponding to current position + y/x distances
+                idx_i = int(round(i + distances[step-1][1]))
+                idx_j = int(round(j + distances[step-1][2]))
 
                 in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
                 in_height = critical_height < max_elev
@@ -55,6 +72,13 @@ def shadows(in_array, az, alt, res):
                     next_elev = in_array[idx_i, idx_j]
                     if next_elev > point_elev and next_elev > critical_height:
                         shadow_array[i, j] = 0
+
+                        # set all array indices in between our found shadowing index and the source index to shadowed
+                        for step2 in range(1, step):
+                            i2 = int(round(i + distances[step2-1][1]))
+                            j2 = int(round(j + distances[step2-1][2]))
+                            shadow_array[i2, j2] = 0
+
                         break  # We're done with this point, move on to the next
 
     return shadow_array
