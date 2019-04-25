@@ -422,7 +422,8 @@ def skymodel(in_array, lum_lines, overlap, nodata):
         # Only pass a small overlapping in_array to hillshade- the shade
         # overlap is way larger than needed for the hillshade
         hs_overlap = overlap - 20
-        shade = hillshade(
+        shade = np.zeros((in_array.shape))
+        shade[hs_overlap:-hs_overlap, hs_overlap:-hs_overlap] = hillshade(
                     in_array[hs_overlap:-hs_overlap, hs_overlap:-hs_overlap],
                     az=az, alt=alt, nodata=nodata*5, scale=False
                     ) * weight
