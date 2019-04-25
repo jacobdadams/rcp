@@ -326,7 +326,7 @@ def mdenoise(in_array, t, n, v, tile=None):
     return mdenoised_array
 
 
-def hillshade(in_array, az, alt, scale=False):
+def hillshade(in_array, az, alt, nodata, scale=False):
     '''
     Custom implmentation of hillshading, using the algorithm from the source
     code for gdaldem. The inputs and outputs are the same as in gdal or ArcGIS.
@@ -334,14 +334,15 @@ def hillshade(in_array, az, alt, scale=False):
                     technique from below.
     az:             The sun's azimuth, in degrees.
     alt:            The sun's altitude, in degrees.
+    nodata:         The source raster's nodata value.
     scale:          When true, stretches the result to 1-255. CAUTION: If using
                     as part of a parallel or multi-chunk process, each chunk
                     has different min and max values, which leads to different
                     stretching for each chunk.
     '''
 
-    # Create new array wsith s_nodata values set to np.nan (for edges)
-    nan_array = np.where(in_array == s_nodata, np.nan, in_array)
+    # Create new array wsith nodata values set to np.nan (for edges)
+    nan_array = np.where(in_array == nodata, np.nan, in_array)
 
     # x = np.zeros(nan_array.shape)
     # y = np.zeros(nan_array.shape)
@@ -418,7 +419,13 @@ def skymodel(in_array, lum_lines, overlap, nodata):
         az = float(line[0])
         alt = float(line[1])
         weight = float(line[2])
-        shade = hillshade(in_array, az=az, alt=alt, scale=False) * weight
+        # Only pass a small overlapping in_array to hillshade- the shade
+        # overlap is way larger than needed for the hillshade
+        hs_overlap = overlap - 20
+        shade = hillshade(
+                    in_array[hs_overlap:-hs_overlap, hs_overlap:-hs_overlap],
+                    az=az, alt=alt, nodata=nodata*5, scale=False
+                    ) * weight
         shadowed = shadows(in_array, az, alt, cell_size, overlap, nodata*5)
         # shade = hillshade(nan_array, az=az, alt=alt, scale=False) * weight
         # shadowed = shadowing.shadows(nan_array, az, alt, cell_size, overlap, nodata)
@@ -515,7 +522,7 @@ def shadows(in_array, az, alt, res, overlap, nodata):
                 if in_bounds and in_height:
                     next_elev = in_array[idx_i, idx_j]
                     # Bail out if we hit a nodata area
-                    if next_elev == nodata:
+                    if next_elev == nodata or next_elev == np.nan:
                         break
 
                     if next_elev > point_elev and next_elev > critical_height:
@@ -720,7 +727,7 @@ def ProcessSuperArray(chunk_info):
         elif method == "TPI":
             new_data = TPI(super_array, options["radius"])
         elif method == "hillshade":
-            new_data = hillshade(super_array, options["az"], options["alt"])
+            new_data = hillshade(super_array, options["az"], options["alt"], s_nodata)
         elif method == "skymodel":
             new_data = skymodel(super_array, options["lum_lines"], f2, s_nodata)
         elif method == "test":
