@@ -8,8 +8,9 @@ cc = CC('shadowing')
 cc.target_cpu = "host"
 
 
-@cc.export('shadows', "u1[:,:](f8[:,:],f8,f8,f8,u4)")
-def shadows(in_array, az, alt, res, overlap):
+@cc.export('shadows', "u1[:,:](f8[:,:],f8,f8,f8,u4,f8)")
+# @cc.export('shadows', "u1[:,:](f4[:,:],f8,f8,f8,u4,f8)")
+def shadows(in_array, az, alt, res, overlap, nodata):
     # Rows = i = y values, cols = j = x values
     rows = in_array.shape[0]
     cols = in_array.shape[1]
@@ -41,15 +42,25 @@ def shadows(in_array, az, alt, res, overlap):
     # Only compute shadows for the actual chunk area in a super_array
     # We don't care about the overlap areas in the output array, they just get
     # overwritten by the nodata value
-    y_start = overlap
-    y_end = rows - overlap
-    x_start = overlap
-    x_end = rows - overlap
+    if overlap > 0:
+        y_start = overlap - 1
+        y_end = rows - overlap
+        x_start = overlap - 1
+        x_end = cols - overlap
+    else:
+        y_start = 0
+        y_end = rows
+        x_start = 0
+        x_end = cols
 
     for i in range(y_start, y_end):
         for j in range(x_start, x_end):
 
             point_elev = in_array[i, j]  # the point we want to determine if in shadow
+
+            # # Bail out if point is nodata
+            # if point_elev == nodata:
+            #     break
 
             for step in range(1, max_steps):  # start at a step of 1- a point cannot be shadowed by itself
 
@@ -70,6 +81,10 @@ def shadows(in_array, az, alt, res, overlap):
 
                 if in_bounds and in_height:
                     next_elev = in_array[idx_i, idx_j]
+                    # Bail out if we hit a nodata area
+                    if next_elev == nodata:
+                        break
+
                     if next_elev > point_elev and next_elev > critical_height:
                         shadow_array[i, j] = 0
 

@@ -8,6 +8,7 @@ import datetime
 import numba
 import sys
 from memory_profiler import profile
+import shadowing
 
 
 # Notes:
@@ -341,6 +342,7 @@ def skymodel(in_array, lum_lines, res, nodata):#, cell_size):
 
     # Multiply by 5 per K & S
     in_array *= 5
+
     i = 1
     # Loop through luminance file lines to calculate multiple hillshades
     for line in lum_lines:
@@ -352,7 +354,8 @@ def skymodel(in_array, lum_lines, res, nodata):#, cell_size):
         # shade = hillshade_numba(in_array, az, alt, res, nodata) * weight
         shade = hillshade(in_array[:], az, alt, res, nodata) * weight
         # print("shadowing...")
-        shadowed = shadows(in_array, az, alt, res, nodata)
+        shadowed = shadows(in_array, az, alt, res, nodata*5)
+        # shadowed = shadowing.shadows(in_array, az, alt, res, 0, nodata*5)
         # print("combining...")
 
         skyshade += (shade * shadowed)
@@ -367,8 +370,8 @@ def skymodel(in_array, lum_lines, res, nodata):#, cell_size):
     return skyshade
 
 
-@numba.jit("u1[:,:](f4[:,:],f8,f8,f8,f8)", nopython=True)
-def shadows(in_array, az, alt, res, nodata):
+@numba.jit("u1[:,:](f4[:,:],f8,f8,f8,u4,f8)", nopython=True)
+def shadows(in_array, az, alt, res, overlap, nodata):
     # Rows = i = y values, cols = j = x values
     rows = in_array.shape[0]
     cols = in_array.shape[1]
@@ -474,9 +477,19 @@ def shadows(in_array, az, alt, res, nodata):
         # # total_distance = math.sqrt((j_distance*res)**2 + (i_distance*res)**2) * tanaltrad
         # total_distance = math.sqrt(x_dist_sq + y_dist_sq) * tanaltrad
         # distances.append((total_distance, i_distance, j_distance))
+    if overlap > 0:
+        y_start = overlap - 1
+        y_end = rows - overlap
+        x_start = overlap - 1
+        x_end = cols - overlap
+    else:
+        y_start = 0
+        y_end = rows
+        x_start = 0
+        x_end = cols
 
-    for i in range(0, rows):
-        for j in range(0, cols):
+    for i in range(y_start, y_end):
+        for j in range(x_start, x_end):
             # keep_going = True
 
             # counter += 1
@@ -535,6 +548,10 @@ def shadows(in_array, az, alt, res, nodata):
 
                 if in_bounds and in_height:  # and in_distance:
                     next_elev = in_array[idx_i, idx_j]
+                    # Bail out if we hit a nodata area
+                    if next_elev == nodata:
+                        break
+
                     if next_elev > point_elev and next_elev > critical_height:
                         shadow_array[i, j] = 0
 
@@ -604,7 +621,7 @@ def shadows(in_array, az, alt, res, nodata):
 csv_path = r'C:\GIS\Data\Elevation\Uintahs\test2_nohdr.csv'
 in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest.tif'
 # in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\uintahs_fft60_sub.tif'
-out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_sky_1x600_test2_precom_maxcalc .tif'
+out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_sky_1x600_test2_jit_old.tif'
 
 alt = 45.
 az = 315.
