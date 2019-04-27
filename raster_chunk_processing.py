@@ -474,7 +474,7 @@ def shadows(in_array, az, alt, res, overlap, nodata):
     # Rows = i = y values, cols = j = x values
     rows = in_array.shape[0]
     cols = in_array.shape[1]
-    shadow_array = np.ones(in_array.shape, np.int8)  # init to 1 (not shadowed), change to 0 if shadowed
+    shadow_array = np.ones(in_array.shape)  # init to 1 (not shadowed), change to 0 if shadowed
     max_elev = np.max(in_array)
 
     az = 90. - az  # convert from 0 = north, cw to 0 = east, ccw
