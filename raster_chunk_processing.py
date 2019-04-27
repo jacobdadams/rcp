@@ -365,9 +365,21 @@ def hillshade(in_array, az, alt, nodata, weight=1, scale=False):
     alpha = y * cosaz * cosalt - x * sinaz * cosalt
     x = None
     y = None
-    shaded = (sinalt - alpha) / np.sqrt(1 + xx_plus_yy) * 255 * weight
+    shaded = (sinalt - alpha) / np.sqrt(1 + xx_plus_yy)
     # scale from 0-1 to 0-255
-    return shaded  #* 255
+    # result is +-1, scale to 0-255, mult by weight
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        # newmax = 255
+        # newmin = 0
+        # oldmax = 1
+        # oldmin = -1
+        # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
+        # result = 127.5 * (shaded + 1) * weight
+        result = ((255*(shaded+1))/2) * weight
+
+    return result
+
 
     # if scale:
     #     # Scale to 1-255 (stretches min value to 1, max to 255)
@@ -426,7 +438,7 @@ def skymodel(in_array, lum_lines, overlap, nodata):
             hs_overlap = overlap - 20
         else:
             hs_overlap = 0
-        shade = np.zeros(in_array.shape)
+        shade = np.zeros(in_array.shape, np.int8)
         shade[hs_overlap:-hs_overlap, hs_overlap:-hs_overlap] = hillshade(
                     in_array[hs_overlap:-hs_overlap, hs_overlap:-hs_overlap],
                     az=az, alt=alt, nodata=nodata*5, scale=False, weight=weight
