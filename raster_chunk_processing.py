@@ -326,7 +326,7 @@ def mdenoise(in_array, t, n, v, tile=None):
     return mdenoised_array
 
 
-def hillshade(in_array, az, alt, nodata, weight=1, scale=False):
+def hillshade(in_array, az, alt, nodata, scale=False):
     '''
     Custom implmentation of hillshading, using the algorithm from the source
     code for gdaldem. The inputs and outputs are the same as in gdal or ArcGIS.
@@ -335,7 +335,6 @@ def hillshade(in_array, az, alt, nodata, weight=1, scale=False):
     az:             The sun's azimuth, in degrees.
     alt:            The sun's altitude, in degrees.
     nodata:         The source raster's nodata value.
-    weight:         Weight for skymodelling
     scale:          When true, stretches the result to 1-255. CAUTION: If using
                     as part of a parallel or multi-chunk process, each chunk
                     has different min and max values, which leads to different
@@ -366,7 +365,6 @@ def hillshade(in_array, az, alt, nodata, weight=1, scale=False):
     x = None
     y = None
     shaded = (sinalt - alpha) / np.sqrt(1 + xx_plus_yy)
-    # scale from 0-1 to 0-255
     # result is +-1, scale to 0-255, mult by weight
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
@@ -375,7 +373,7 @@ def hillshade(in_array, az, alt, nodata, weight=1, scale=False):
         # oldmax = 1
         # oldmin = -1
         # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
-        result = 127.5 * (shaded + 1) * weight
+        result = 127.5 * (shaded + 1)
 
     return result
 
@@ -440,12 +438,19 @@ def skymodel(in_array, lum_lines, overlap, nodata):
         shade = np.zeros(in_array.shape)
         shade[hs_overlap:-hs_overlap, hs_overlap:-hs_overlap] = hillshade(
                     in_array[hs_overlap:-hs_overlap, hs_overlap:-hs_overlap],
-                    az=az, alt=alt, nodata=nodata*5, scale=False, weight=weight
+                    az=az, alt=alt, nodata=nodata*5, scale=False,
                     )
         shadowed = shadows(in_array, az, alt, cell_size, overlap, nodata*5)
         # shade = hillshade(nan_array, az=az, alt=alt, scale=False) * weight
         # shadowed = shadowing.shadows(nan_array, az, alt, cell_size, overlap, nodata)
-        skyshade += shade * shadowed
+        # scale from 0-255 to 1-255, apply weight to scaled (I think arcpy hillshades range from 1-255, with 0 being nodata)
+        # Now instead of shadowed areas always being 0, they'll be 1*scale- it will still contribute to final summed raster
+        # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
+        scaled = 254*(shade*shadowed)/255 + 1
+        skyshade += scaled * weight
+
+        # skyshade += shade * shadowed
+
 
         shade = None
 
