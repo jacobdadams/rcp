@@ -38,6 +38,7 @@
 # Version History
 # 1.0.0:    Original release at Cache County
 # 1.9.0:    First fix of skymodel shadowing
+# 1.9.1:    Shadowing implmented at an acceptable level
 
 # TODO:
 #   Merge clahe kernel size arg with general kernel radius arg
@@ -62,7 +63,6 @@ import numba
 from astropy.convolution import convolve_fft
 from skimage import exposure
 from osgeo import gdal, gdal_array
-# import shadowing
 
 
 # Just a simple class to hold the information about each chunk
@@ -396,8 +396,8 @@ def hillshade(in_array, az, alt, nodata, scale=False):
     #
     # return result
 
-
-def skymodel(in_array, lum_lines, overlap, nodata):
+# @numba.jit(nopython=True)
+def skymodel(in_array, lum_lines, overlap, nodata, res):
     '''
     Creates a unique hillshade based on a skymodel, implmenting the method
     defined in Kennelly and Stewart (2014), A Uniform Sky Illumination Model to
@@ -414,12 +414,9 @@ def skymodel(in_array, lum_lines, overlap, nodata):
     skyshade = np.zeros(in_array.shape)
 
     # If it's all NoData, just return an array of 0's
-    if in_array.mean() == s_nodata:
+    if in_array.mean() == nodata:
         return skyshade
 
-    # nan_array = np.where(in_array == s_nodata, np.nan, in_array)
-
-    # mult = in_array * 5
     # Multiply elevation by 5 as per original paper
     in_array *= 5
     # nan_array *= 5
@@ -440,38 +437,21 @@ def skymodel(in_array, lum_lines, overlap, nodata):
                     in_array[hs_overlap:-hs_overlap, hs_overlap:-hs_overlap],
                     az=az, alt=alt, nodata=nodata*5, scale=False,
                     )
-        shadowed = shadows(in_array, az, alt, cell_size, overlap, nodata*5)
+        shadowed = shadows(in_array, az, alt, res, overlap, nodata*5)
         # shade = hillshade(nan_array, az=az, alt=alt, scale=False) * weight
         # shadowed = shadowing.shadows(nan_array, az, alt, cell_size, overlap, nodata)
         # scale from 0-255 to 1-255, apply weight to scaled (I think arcpy hillshades range from 1-255, with 0 being nodata)
         # Now instead of shadowed areas always being 0, they'll be 1*scale- it will still contribute to final summed raster
         # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
-        scaled = 254*(shade*shadowed)/255 + 1
-        skyshade += scaled * weight
+        # scaled = 0.996078431*(shade*shadowed) + 1
+        # skyshade += (0.996078431*(shade*shadowed) + 1) * weight
 
-        # skyshade += shade * shadowed
+        skyshade += shade * shadowed * weight
 
 
         shade = None
 
     return skyshade
-
-    # --- SCALING DOESN'T WORK- The min/max for each chunk are different.
-    # --- We'd need to scale after the entire thing is finished.
-    # Scale to 1-255
-    # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
-    # Supressing runtime warnings due to NaNs (they just get hidden by NoData
-    # masks in the supper_array rebuild anyways)
-    # with warnings.catch_warnings():
-    #     warnings.simplefilter("ignore", category=RuntimeWarning)
-    #     newmax = 255
-    #     newmin = 1
-    #     oldmax = np.nanmax(skyshade)
-    #     oldmin = np.nanmin(skyshade)
-    #
-    # scaled = (newmax - newmin)*(skyshade - oldmin) / (oldmax - oldmin) + newmin
-    #
-    # return scaled
 
 
 @numba.jit(nopython=True)
@@ -750,7 +730,7 @@ def ProcessSuperArray(chunk_info):
         elif method == "hillshade":
             new_data = hillshade(super_array, options["az"], options["alt"], s_nodata)
         elif method == "skymodel":
-            new_data = skymodel(super_array, options["lum_lines"], f2, s_nodata)
+            new_data = skymodel(super_array, options["lum_lines"], f2, s_nodata, cell_size)
         elif method == "test":
             new_data = super_array + 5
         else:
@@ -968,7 +948,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     # compression Options
     jpeg_opts = ["compress=jpeg", "interleave=pixel", "photometric=ycbcr",
                  "tiled=yes", "jpeg_quality=90", "bigtiff=yes"]
-    lzw_opts = ["compress=lzw", "tiled=yes", "bigtiff=yes"]
+    lzw_opts = ["compress=deflate", "tiled=yes", "bigtiff=yes"]
     # Use jpeg compression opts if three bands, otherwise lzw
     if bands == 3 and driver.LongName == 'GeoTIFF':
         opts = jpeg_opts
