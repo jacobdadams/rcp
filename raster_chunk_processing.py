@@ -5,11 +5,13 @@
 #            etc) to arbitrarily large rasters by chunking it out into smaller
 #            pieces and processes in parallel (if desired)
 #  Author:   Jacob Adams, jacob.adams@cachecounty.org
+#            Jacob Adams, jacob.dan.adams@gmail.com
 #
 #*****************************************************************************
 # MIT License
 #
 # Copyright (c) 2018 Cache County
+# Copyright (c) 2019 Jacob Adams
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -30,8 +32,13 @@
 # THE SOFTWARE.
 #*****************************************************************************
 
-# Version:  1.0.0
-# Date      14 Aug 2018
+# Version:  1.9.0
+# Date      30 March 2019
+
+# Version History
+# 1.0.0:    Original release at Cache County
+# 1.9.0:    First fix of skymodel shadowing
+# 1.9.1:    Shadowing implmented at an acceptable level
 
 # TODO:
 #   Merge clahe kernel size arg with general kernel radius arg
@@ -52,6 +59,7 @@ import argparse
 import traceback
 import math
 import multiprocessing as mp
+import numba
 from astropy.convolution import convolve_fft
 from skimage import exposure
 from osgeo import gdal, gdal_array
@@ -111,6 +119,13 @@ def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
             row = " ".join("{0}".format(n) for n in in_array[i, :])
             f.write(row)
             f.write("\n")
+
+
+def stretch_scale(in_array, start_elev, max_elev, z, sigma, radius):
+    '''
+    Scales an elevation raster based on the gaussian average neighborhood elevation
+    '''
+    raise NotImplementedError
 
 
 def blur_mean(in_array, radius):
@@ -311,7 +326,7 @@ def mdenoise(in_array, t, n, v, tile=None):
     return mdenoised_array
 
 
-def hillshade(in_array, az, alt, scale=False):
+def hillshade(in_array, az, alt, nodata, scale=False):
     '''
     Custom implmentation of hillshading, using the algorithm from the source
     code for gdaldem. The inputs and outputs are the same as in gdal or ArcGIS.
@@ -319,17 +334,18 @@ def hillshade(in_array, az, alt, scale=False):
                     technique from below.
     az:             The sun's azimuth, in degrees.
     alt:            The sun's altitude, in degrees.
+    nodata:         The source raster's nodata value.
     scale:          When true, stretches the result to 1-255. CAUTION: If using
                     as part of a parallel or multi-chunk process, each chunk
                     has different min and max values, which leads to different
                     stretching for each chunk.
     '''
 
-    # Create new array wsith s_nodata values set to np.nan (for edges)
-    nan_array = np.where(in_array == s_nodata, np.nan, in_array)
+    # Create new array wsith nodata values set to np.nan (for edges)
+    nan_array = np.where(in_array == nodata, np.nan, in_array)
 
-    x = np.zeros(nan_array.shape)
-    y = np.zeros(nan_array.shape)
+    # x = np.zeros(nan_array.shape)
+    # y = np.zeros(nan_array.shape)
 
     # Conversion between mathematical and nautical azimuth
     az = 90. - az
@@ -338,6 +354,7 @@ def hillshade(in_array, az, alt, scale=False):
     altrad = alt * np.pi / 180.
 
     x, y = np.gradient(nan_array, cell_size, cell_size, edge_order=2)
+    # x, y = np.gradient(in_array, cell_size, cell_size, edge_order=2)
 
     sinalt = np.sin(altrad)
     cosaz = np.cos(azrad)
@@ -345,31 +362,42 @@ def hillshade(in_array, az, alt, scale=False):
     sinaz = np.sin(azrad)
     xx_plus_yy = x * x + y * y
     alpha = y * cosaz * cosalt - x * sinaz * cosalt
+    x = None
+    y = None
     shaded = (sinalt - alpha) / np.sqrt(1 + xx_plus_yy)
-
-    # scale from 0-1 to 0-255
-    shaded255 = shaded * 255
-
-    if scale:
-        # Scale to 1-255 (stretches min value to 1, max to 255)
+    # result is +-1, scale to 0-255, mult by weight
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        # newmax = 255
+        # newmin = 0
+        # oldmax = 1
+        # oldmin = -1
         # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
-        # Supressing runtime warnings due to NaNs (they just get hidden by
-        # NoData masks in the supper_array rebuild anyways)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=RuntimeWarning)
-            newmax = 255
-            newmin = 1
-            oldmax = np.nanmax(shaded255)
-            oldmin = np.nanmin(shaded255)
-
-        result = (newmax-newmin) * (shaded255-oldmin) / (oldmax-oldmin) + newmin
-    else:
-        result = shaded255
+        result = 127.5 * (shaded + 1)
 
     return result
 
 
-def skymodel(in_array, lum_lines):
+    # if scale:
+    #     # Scale to 1-255 (stretches min value to 1, max to 255)
+    #     # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
+    #     # Supressing runtime warnings due to NaNs (they just get hidden by
+    #     # NoData masks in the supper_array rebuild anyways)
+    #     with warnings.catch_warnings():
+    #         warnings.simplefilter("ignore", category=RuntimeWarning)
+    #         newmax = 255
+    #         newmin = 1
+    #         oldmax = np.nanmax(shaded255)
+    #         oldmin = np.nanmin(shaded255)
+    #
+    #     result = (newmax-newmin) * (shaded255-oldmin) / (oldmax-oldmin) + newmin
+    # else:
+    #     result = shaded255
+    #
+    # return result
+
+# @numba.jit(nopython=True)
+def skymodel(in_array, lum_lines, overlap, nodata, res):
     '''
     Creates a unique hillshade based on a skymodel, implmenting the method
     defined in Kennelly and Stewart (2014), A Uniform Sky Illumination Model to
@@ -383,41 +411,133 @@ def skymodel(in_array, lum_lines):
     '''
 
     # initialize skyshade as 0's
-    skyshade = np.zeros((in_array.shape))
+    skyshade = np.zeros(in_array.shape)
 
     # If it's all NoData, just return an array of 0's
-    if in_array.mean() == s_nodata:
+    if in_array.mean() == nodata:
         return skyshade
+
+    # Multiply elevation by 5 as per original paper
+    in_array *= 5
+    # nan_array *= 5
 
     # Loop through luminance file lines to calculate multiple hillshades
     for line in lum_lines:
         az = float(line[0])
         alt = float(line[1])
         weight = float(line[2])
+        # Only pass a small overlapping in_array to hillshade- the shade
+        # overlap is way larger than needed for the hillshade
+        if overlap > 20:
+            hs_overlap = overlap - 20
+        else:
+            hs_overlap = 0
+        shade = np.zeros(in_array.shape)
+        shade[hs_overlap:-hs_overlap, hs_overlap:-hs_overlap] = hillshade(
+                    in_array[hs_overlap:-hs_overlap, hs_overlap:-hs_overlap],
+                    az=az, alt=alt, nodata=nodata*5, scale=False,
+                    )
+        shadowed = shadows(in_array, az, alt, res, overlap, nodata*5)
+        # shade = hillshade(nan_array, az=az, alt=alt, scale=False) * weight
+        # shadowed = shadowing.shadows(nan_array, az, alt, cell_size, overlap, nodata)
+        # scale from 0-255 to 1-255, apply weight to scaled (I think arcpy hillshades range from 1-255, with 0 being nodata)
+        # Now instead of shadowed areas always being 0, they'll be 1*scale- it will still contribute to final summed raster
+        # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
+        # scaled = 0.996078431*(shade*shadowed) + 1
+        # skyshade += (0.996078431*(shade*shadowed) + 1) * weight
 
-        shade = hillshade(in_array, az=az, alt=alt, scale=False) * weight
+        skyshade += shade * shadowed * weight
 
-        skyshade = skyshade + shade
+
         shade = None
 
     return skyshade
 
-    # --- SCALING DOESN'T WORK- The min/max for each chunk are different.
-    # --- We'd need to scale after the entire thing is finished.
-    # Scale to 1-255
-    # ((newmax-newmin)(val-oldmin))/(oldmax-oldmin)+newmin
-    # Supressing runtime warnings due to NaNs (they just get hidden by NoData
-    # masks in the supper_array rebuild anyways)
-    # with warnings.catch_warnings():
-    #     warnings.simplefilter("ignore", category=RuntimeWarning)
-    #     newmax = 255
-    #     newmin = 1
-    #     oldmax = np.nanmax(skyshade)
-    #     oldmin = np.nanmin(skyshade)
-    #
-    # scaled = (newmax - newmin)*(skyshade - oldmin) / (oldmax - oldmin) + newmin
-    #
-    # return scaled
+
+@numba.jit(nopython=True)
+def shadows(in_array, az, alt, res, overlap, nodata):
+    # Rows = i = y values, cols = j = x values
+    rows = in_array.shape[0]
+    cols = in_array.shape[1]
+    shadow_array = np.ones(in_array.shape)  # init to 1 (not shadowed), change to 0 if shadowed
+    max_elev = np.max(in_array)
+
+    az = 90. - az  # convert from 0 = north, cw to 0 = east, ccw
+
+    azrad = az * np.pi / 180.
+    altrad = alt * np.pi / 180.
+    delta_j = math.cos(azrad)
+    delta_i = -1. * math.sin(azrad)
+    tanaltrad = math.tan(altrad)
+
+    mult_size = 1
+    max_steps = 600
+
+    already_shadowed = 0
+
+    # precompute idx distances
+    distances = []
+    for d in range(1, max_steps):
+        distance = d * res
+        step_height = distance * tanaltrad
+        i_distance = delta_i * d
+        j_distance = delta_j * d
+        distances.append((step_height, i_distance, j_distance))
+
+    # Only compute shadows for the actual chunk area in a super_array
+    # We don't care about the overlap areas in the output array, they just get
+    # overwritten by the nodata value
+    if overlap > 0:
+        y_start = overlap - 1
+        y_end = rows - overlap
+        x_start = overlap - 1
+        x_end = cols - overlap
+    else:
+        y_start = 0
+        y_end = rows
+        x_start = 0
+        x_end = cols
+
+    for i in range(y_start, y_end):
+        for j in range(x_start, x_end):
+
+            point_elev = in_array[i, j]  # the point we want to determine if in shadow
+
+            for step in range(1, max_steps):  # start at a step of 1- a point cannot be shadowed by itself
+
+                # No need to continue if it's already shadowed
+                if shadow_array[i, j] == 0:
+                    already_shadowed += 1
+                    # print("shadow break")
+                    break
+
+                critical_height = distances[step-1][0] + point_elev
+
+                # idx_i/j are indices of array corresponding to current position + y/x distances
+                idx_i = int(round(i + distances[step-1][1]))
+                idx_j = int(round(j + distances[step-1][2]))
+
+                in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
+                in_height = critical_height < max_elev
+
+                if in_bounds and in_height:
+                    next_elev = in_array[idx_i, idx_j]
+                    # Bail out if we hit a nodata area
+                    if next_elev == nodata or next_elev == np.nan:
+                        break
+
+                    if next_elev > point_elev and next_elev > critical_height:
+                        shadow_array[i, j] = 0
+
+                        # set all array indices in between our found shadowing index and the source index to shadowed
+                        for step2 in range(1, step):
+                            i2 = int(round(i + distances[step2-1][1]))
+                            j2 = int(round(j + distances[step2-1][2]))
+                            shadow_array[i2, j2] = 0
+
+                        break  # We're done with this point, move on to the next
+
+    return shadow_array
 
 
 def TPI(in_array, radius):
@@ -529,7 +649,7 @@ def ProcessSuperArray(chunk_info):
     # If super_array exceeds bounds of image:
     #   Adjust x/y offset to appropriate place (for < 0 cases only).
     #   Reduce read size by f2 (we're not reading that edge area on one side)
-    #   Move start or end value for super_array slice by f2
+    #   Move start or end value for super_array slice to be -f2 ([:-f2])
     # Checks both x and y, setting read and slice values for each dimension if
     # needed
     if x_off < 0:
@@ -608,9 +728,9 @@ def ProcessSuperArray(chunk_info):
         elif method == "TPI":
             new_data = TPI(super_array, options["radius"])
         elif method == "hillshade":
-            new_data = hillshade(super_array, options["az"], options["alt"])
+            new_data = hillshade(super_array, options["az"], options["alt"], s_nodata)
         elif method == "skymodel":
-            new_data = skymodel(super_array, options["lum_lines"])
+            new_data = skymodel(super_array, options["lum_lines"], f2, s_nodata, cell_size)
         elif method == "test":
             new_data = super_array + 5
         else:
@@ -886,7 +1006,8 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     # if there's only one chunk, set overlap to 0 so that read indeces
     # aren't out of bounds
     if total_chunks > 1:
-        f2 = 2 * overlap
+        # f2 = 2 * overlap
+        f2 = overlap
     else:
         f2 = 0
 
