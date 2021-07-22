@@ -8,7 +8,7 @@ import datetime
 import numba
 import sys
 from memory_profiler import profile
-import shadowing
+from . import shadowing
 
 
 # Notes:

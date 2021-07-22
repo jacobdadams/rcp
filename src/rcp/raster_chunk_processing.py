@@ -64,8 +64,8 @@ import multiprocessing as mp
 from skimage import exposure
 from osgeo import gdal, gdal_array
 
-import methods
-import settings
+from . import methods
+from . import settings
 
 
 # Just a simple class to hold the information about each chunk
@@ -615,20 +615,19 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     return(finish)
 
 
-# ==============================================================================
-# Main Variables
+def process_args():
+    # ==============================================================================
+    # Main Variables
 
-# Global variables
-# These are read in as part of opening the file in ProcessSuperArray() but will
-# be used by WriteASC() as part of the mdenoise() call
-# s_nodata is used several places; really needs to have been set in input DEM.
-# global cell_size
-# global s_nodata
-# global mdenoise_path
-# mdenoise_path = r'c:\GIS\Installers\MDenoise.exe'
+    # Global variables
+    # These are read in as part of opening the file in ProcessSuperArray() but will
+    # be used by WriteASC() as part of the mdenoise() call
+    # s_nodata is used several places; really needs to have been set in input DEM.
+    # global cell_size
+    # global s_nodata
+    # global mdenoise_path
+    # mdenoise_path = r'c:\GIS\Installers\MDenoise.exe'
 
-# Need this check for multiprocessing in windows
-if "__main__" in __name__:
 
     # Required arguments:
     # Parent:
@@ -726,6 +725,10 @@ if "__main__" in __name__:
             print("\n")
             print(traceback.format_exc())
 
+
+# Need this check for multiprocessing in windows
+if "__main__" in __name__:
+    process_args()
 
 # General Notes
 # md105060 = n=10, t=0.50, v=60

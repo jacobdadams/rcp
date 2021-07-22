@@ -14,7 +14,7 @@ import numpy as np
 from astropy.convolution import convolve_fft
 from osgeo import gdal
 
-import settings
+from . import settings
 
 
 def WriteASC(in_array, asc_path, xll, yll, c_size, nodata=-37267):
