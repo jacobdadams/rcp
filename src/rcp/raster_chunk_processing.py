@@ -38,7 +38,7 @@
 # Version History
 # 1.0.0:    Original release at Cache County
 # 1.9.0:    First fix of skymodel shadowing
-# 1.9.1:    Shadowing implmented at an acceptable level
+# 1.9.1:    Shadowing implemented at an acceptable level
 
 # TODO:
 #   Merge clahe kernel size arg with general kernel radius arg
@@ -106,10 +106,10 @@ def ProcessSuperArray(chunk_info):
     Relies on having a global lock object, normally passed through mp.pool()
     with a simple initializer function.
 
-    chunk_info:     A simple Chunk() data structure obejct that holds the
+    chunk_info:     A simple Chunk() data structure object that holds the
                     information about the chunk and the file as a whole.
                     pool.map() iterates over a single collection, so this
-                    function uses a single picklable object to easily pass all
+                    function uses a single pickleable object to easily pass all
                     the needed info to the function.
     '''
 
@@ -150,14 +150,14 @@ def ProcessSuperArray(chunk_info):
 
     # Super array calculations
     # Non-edge-case values for super array
-    # f2 is our doubled overlap value; we multipy by 2 here to get an overlap
+    # f2 is our doubled overlap value; we multiply by 2 here to get an overlap
     # on each side of the dimension (ie, f2 <> x values <> f2)
     x_size = x_end - x_start + 2 * f2
     y_size = y_end - y_start + 2 * f2
     x_off = x_start - f2
     y_off = y_start - f2
 
-    # Values for ReadAsArray, these aren't changed later unelss the border case
+    # Values for ReadAsArray, these aren't changed later unless the border case
     # checks change them
     read_x_off = x_off
     read_y_off = y_off
@@ -165,7 +165,7 @@ def ProcessSuperArray(chunk_info):
     read_y_size = y_size
 
     # Slice values (of super_array) for copying read_array in to super_array,
-    # these aren't changed later unelss the border case checks change them
+    # these aren't changed later unless the border case checks change them
     sa_x_start = 0
     sa_x_end = x_size
     sa_y_start = 0
@@ -354,7 +354,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     if method == "blur_gauss":
         gauss_opts = ["radius", "sigma"]
         for opt in gauss_opts:
-            # if the req'd option isn't in the options dictionary or the value
+            # if the required option isn't in the options dictionary or the value
             # in the dictionary is None
             if opt not in options or not options[opt]:
                 raise ValueError("Required option {} not provided for method {}.".format(opt, method))
@@ -529,7 +529,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
 
     # Double the overlap just to be safe. This distance becomes one side of
     # the super_array beyond the wanted data (f2 <> x values <> f2)
-    # if there's only one chunk, set overlap to 0 so that read indeces
+    # if there's only one chunk, set overlap to 0 so that read indices
     # aren't out of bounds
     if total_chunks > 1:
         # f2 = 2 * overlap
