@@ -278,7 +278,7 @@ def process_super_array(chunk_info):
             )
             new_data *= 255.0  # scale CLAHE from 0-1 to 0-255
         elif method == 'TPI':
-            new_data = methods.TPI(super_array, s_nodata, options['radius'])
+            new_data = methods.tpi(super_array, s_nodata, options['radius'])
         elif method == 'hillshade':
             new_data = methods.hillshade(super_array, options['az'], options['alt'], s_nodata, cell_size)
         elif method == 'skymodel':
