@@ -13,7 +13,8 @@ setup(
     name='rcp',
     version='1.9.0',
     license='MIT',
-    description="A framework for parallel kernal-based processing of arbitrarily-large raters, including an implementation of Kennelly and Stewart's skymodel method.",
+    description=
+    "A framework for parallel kernel-based processing of arbitrarily-large raters, including an implementation of Kennelly and Stewart's skymodel method.",
     author='Jake Adams',
     author_email='jacob.dan.adams@gmail.com',
     url='https://github.com/jacobdadams/rcp',
@@ -32,8 +33,7 @@ setup(
         'Issue Tracker': 'https://github.com/jacobdadams/rcp/issues',
     },
     keywords=['gis'],
-    install_requires=[
-    ],
+    install_requires=[],
     extras_require={
         'tests': [
             'pylint-quotes==0.2.*',
@@ -52,5 +52,4 @@ setup(
         'pytest-runner',
     ],
     entry_points={'console_scripts': ['rcp = rcp.raster_chunk_processing:process_args']},
-
 )
