@@ -46,19 +46,18 @@
 #   Implement LoG kernel
 #   Package python env, RCP, and SkyLum in an easy-to-use download
 
-
-import numpy as np
+import argparse
+import csv
 import datetime
+import traceback
 import os
 # import subprocess
 # import contextlib
 # import tempfile
 # import warnings
-import csv
-import argparse
-import traceback
 # import math
 import multiprocessing as mp
+import numpy as np
 # import numba
 # from astropy.convolution import convolve_fft
 from skimage import exposure
@@ -74,26 +73,26 @@ class Chunk:
 
 
 def sizeof_fmt(num, suffix='B'):
-    '''
+    """
     Quick-and-dirty method for formating file size, from Sridhar Ratnakumar,
     https://stackoverflow.com/questions/1094841/reusable-library-to-get-human-readable-version-of-file-size.
-    '''
+    """
     for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
         if abs(num) < 1024.0:
-            return "%3.1f %s%s" % (num, unit, suffix)
+            return '%3.1f %s%s' % (num, unit, suffix)
         num /= 1024.0
-    return "%.1f %s%s" % (num, 'Yi', suffix)
+    return '%.1f %s%s' % (num, 'Yi', suffix)
 
 
 def stretch_scale(in_array, start_elev, max_elev, z, sigma, radius):
-    '''
+    """
     Scales an elevation raster based on the gaussian average neighborhood elevation
-    '''
+    """
     raise NotImplementedError
 
 
-def ProcessSuperArray(chunk_info):
-    '''
+def process_super_array(chunk_info):
+    """
     Given starting and ending indices of a chunk, overlap value, and relevant
     raster file info via the chunk_info object, this function calculates the
     indices of a "super array" that is 'overlap'-values larger than the chunk
@@ -111,7 +110,7 @@ def ProcessSuperArray(chunk_info):
                     pool.map() iterates over a single collection, so this
                     function uses a single pickleable object to easily pass all
                     the needed info to the function.
-    '''
+    """
 
     # Unpack chunk-specific info
     tile = chunk_info.tile
@@ -197,9 +196,11 @@ def ProcessSuperArray(chunk_info):
     percent = (progress / total_chunks) * 100
     elapsed = datetime.datetime.now() - starttime
     if verbose:
-        print("Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4} Indices: [{5}:{6}, {7}:{8}] PID: {9}".format(tile, progress, total_chunks, percent, elapsed, read_y_off, read_y_off + read_y_size, read_x_off, read_x_off + read_x_size, mp.current_process().pid))
+        print('Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4} Indices: [{5}:{6}, {7}:{8}] PID: {9}'.format(
+            tile, progress, total_chunks, percent, elapsed, read_y_off, read_y_off + read_y_size, read_x_off, read_x_off + read_x_size, mp.current_process().pid)
+            )
     else:
-        print("Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4}".format(tile, progress, total_chunks, percent, elapsed))
+        print('Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4}'.format(tile, progress, total_chunks, percent, elapsed))
 
     for band in range(1, bands + 1):
         # We perform the read calls within the multiprocessing portion to avoid
@@ -237,30 +238,30 @@ def ProcessSuperArray(chunk_info):
         # as NoData.
         super_array[sa_y_start:sa_y_end, sa_x_start:sa_x_end] = read_array
         # Do something with the data
-        if method == "blur_gauss":
-            new_data = methods.blur_gauss(super_array, s_nodata, options["sigma"], options["radius"])
-        elif method == "blur_mean":
-            new_data = methods.blur_mean(super_array, s_nodata, options["radius"])
-        elif method == "blur_toews":
-            new_data = methods.blur_toews(super_array, s_nodata, options["radius"])
-        elif method == "mdenoise":
-            new_data = methods.mdenoise(super_array, s_nodata, cell_size, options["t"],
-                                options["n"], options["v"], tile, verbose)
-        elif method == "clahe":
+        if method == 'blur_gauss':
+            new_data = methods.blur_gauss(super_array, s_nodata, options['sigma'], options['radius'])
+        elif method == 'blur_mean':
+            new_data = methods.blur_mean(super_array, s_nodata, options['radius'])
+        elif method == 'blur_toews':
+            new_data = methods.blur_toews(super_array, s_nodata, options['radius'])
+        elif method == 'mdenoise':
+            new_data = methods.mdenoise(super_array, s_nodata, cell_size, options['t'],
+                                options['n'], options['v'], tile, verbose)
+        elif method == 'clahe':
             new_data = exposure.equalize_adapthist(super_array.astype(int),
-                                                   options["kernel_size"],
-                                                   options["clip_limit"])
+                                                   options['kernel_size'],
+                                                   options['clip_limit'])
             new_data *= 255.0  # scale CLAHE from 0-1 to 0-255
-        elif method == "TPI":
-            new_data = methods.TPI(super_array, s_nodata, options["radius"])
-        elif method == "hillshade":
-            new_data = methods.hillshade(super_array, options["az"], options["alt"], s_nodata, cell_size)
-        elif method == "skymodel":
-            new_data = methods.skymodel(super_array, options["lum_lines"], f2, s_nodata, cell_size)
-        elif method == "test":
+        elif method == 'TPI':
+            new_data = methods.TPI(super_array, s_nodata, options['radius'])
+        elif method == 'hillshade':
+            new_data = methods.hillshade(super_array, options['az'], options['alt'], s_nodata, cell_size)
+        elif method == 'skymodel':
+            new_data = methods.skymodel(super_array, options['lum_lines'], f2, s_nodata, cell_size)
+        elif method == 'test':
             new_data = super_array + 5
         else:
-            raise NotImplementedError("Method not implemented: {}".format(
+            raise NotImplementedError('Method not implemented: {}'.format(
                 method))
 
         # Resulting array is a superset of the data; we need to strip off the
@@ -309,24 +310,24 @@ def ProcessSuperArray(chunk_info):
 
 
 def lock_init(l):
-    '''
+    """
     Mini helper method that allows us to use a global lock accross a pool of
     processes. Used to safely read and write the input/output rasters.
     l:              mp.lock() created and passed as part of mp.pool
                     initialization
-    '''
+    """
     global lock
     lock = l
 
 
 def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                 options, num_threads=1, verbose=False):
-    '''
+    """
     Breaks a raster into smaller chunks for easier processing. This method
     determines the file parameters, prepares the output parameter, calculates
     the start/end indices for each chunk, and stores info about each chunk in
     a Chunk() object. This object is then passed to mp.pool() along with a
-    call to ProcessSuperArray() to perform the actual processing in parallel.
+    call to process_super_array() to perform the actual processing in parallel.
 
     in_dem_path:    Full path to input raster.
     out_dem_path:   Full path to resulting raster.
@@ -346,92 +347,92 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                     output)
 
     Returns the time needed to process the entire raster.
-    '''
+    """
 
     start = datetime.datetime.now()
 
     # Method name and option checks
-    if method == "blur_gauss":
-        gauss_opts = ["radius", "sigma"]
+    if method == 'blur_gauss':
+        gauss_opts = ['radius', 'sigma']
         for opt in gauss_opts:
             # if the required option isn't in the options dictionary or the value
             # in the dictionary is None
             if opt not in options or not options[opt]:
-                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
+                raise ValueError('Required option {} not provided for method {}.'.format(opt, method))
         # Check overlap against radius
-        if overlap < 2 * options["radius"]:
-            overlap = 2 * options["radius"]
+        if overlap < 2 * options['radius']:
+            overlap = 2 * options['radius']
 
-    elif method == "blur_mean":
-        mean_opts = ["radius"]
+    elif method == 'blur_mean':
+        mean_opts = ['radius']
         for opt in mean_opts:
             if opt not in options or not options[opt]:
-                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
-        if overlap < 2 * options["radius"]:
-            overlap = 2 * options["radius"]
+                raise ValueError('Required option {} not provided for method {}.'.format(opt, method))
+        if overlap < 2 * options['radius']:
+            overlap = 2 * options['radius']
 
-    elif method == "blur_toews":
-        mean_opts = ["radius"]
+    elif method == 'blur_toews':
+        mean_opts = ['radius']
         for opt in mean_opts:
             if opt not in options or not options[opt]:
-                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
-        if overlap < 2 * options["radius"]:
-            overlap = 2 * options["radius"]
+                raise ValueError('Required option {} not provided for method {}.'.format(opt, method))
+        if overlap < 2 * options['radius']:
+            overlap = 2 * options['radius']
 
-    elif method == "mdenoise":
-        mdenoise_opts = ["t", "n", "v"]
+    elif method == 'mdenoise':
+        mdenoise_opts = ['t', 'n', 'v']
         for opt in mdenoise_opts:
             if opt not in options or not options[opt]:
-                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
+                raise ValueError('Required option {} not provided for method {}.'.format(opt, method))
 
-    elif method == "clahe":
-        clahe_opts = ["kernel_size", "clip_limit"]
+    elif method == 'clahe':
+        clahe_opts = ['kernel_size', 'clip_limit']
         for opt in clahe_opts:
             if opt not in options or not options[opt]:
-                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
-        if overlap < 2 * options["kernel_size"]:
-            overlap = 2 * options["kernel_size"]
+                raise ValueError('Required option {} not provided for method {}.'.format(opt, method))
+        if overlap < 2 * options['kernel_size']:
+            overlap = 2 * options['kernel_size']
 
-    elif method == "TPI":
-        TPI_opts = ["radius"]
+    elif method == 'TPI':
+        TPI_opts = ['radius']
         for opt in TPI_opts:
             if opt not in options or not options[opt]:
-                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
-        if overlap < 2 * options["radius"]:
-            overlap = 2 * options["radius"]
+                raise ValueError('Required option {} not provided for method {}.'.format(opt, method))
+        if overlap < 2 * options['radius']:
+            overlap = 2 * options['radius']
 
-    elif method == "hillshade":
-        hillshade_opts = ["alt", "az"]
+    elif method == 'hillshade':
+        hillshade_opts = ['alt', 'az']
         for opt in hillshade_opts:
             if opt not in options or not options[opt]:
-                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
+                raise ValueError('Required option {} not provided for method {}.'.format(opt, method))
 
-    elif method == "skymodel":
-        sky_opts = ["lum_file"]
+    elif method == 'skymodel':
+        sky_opts = ['lum_file']
         for opt in sky_opts:
             if opt not in options or not options[opt]:
-                raise ValueError("Required option {} not provided for method {}.".format(opt, method))
-    elif method == "test":
+                raise ValueError('Required option {} not provided for method {}.'.format(opt, method))
+    elif method == 'test':
         pass
     else:
-        raise NotImplementedError("Method not recognized: {}".format(method))
+        raise NotImplementedError('Method not recognized: {}'.format(method))
 
     # If we're doing a skymodel, we need to read in the whole luminance file
     # and add that list to the options dictionary
-    if method == "skymodel":
+    if method == 'skymodel':
         if verbose:
-            print("Reading in luminance file {}".format(options["lum_file"]))
+            print('Reading in luminance file {}'.format(options['lum_file']))
         lines = []
-        with open(options["lum_file"], 'r') as l:
+        with open(options['lum_file'], 'r') as l:
             reader = csv.reader(l)
             for line in reader:
                 lines.append(line)
-        options["lum_lines"] = lines
+        options['lum_lines'] = lines
 
     gdal.UseExceptions()
 
     # Get source file metadata (dimensions, driver, proj, cell size, nodata)
-    print("Processing {0:s}...".format(in_dem_path))
+    print('Processing {0:s}...'.format(in_dem_path))
     s_fh = gdal.Open(in_dem_path, gdal.GA_ReadOnly)
     rows = s_fh.RasterYSize
     cols = s_fh.RasterXSize
@@ -446,9 +447,9 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     s_nodata = s_band.GetNoDataValue()
 
     if s_nodata is None and bands == 1:  # assume a multiband file is an image
-        raise ValueError("No NoData value set in input DEM.")
+        raise ValueError('No NoData value set in input DEM.')
     if verbose and s_nodata is not None:  # Report the source nodata if present
-        print("\tSource NoData Value: {0:f}\n".format(s_nodata))
+        print('\tSource NoData Value: {0:f}\n'.format(s_nodata))
 
     # Close source file handle
     s_band = None
@@ -459,7 +460,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     if driver.LongName == 'Virtual Raster':
         driver = gdal.GetDriverByName('gtiff')
     if os.path.exists(out_dem_path):
-        raise IOError("Output file {} already exists.".format(out_dem_path))
+        raise IOError('Output file {} already exists.'.format(out_dem_path))
     # Set outfile options
     # If it's hillshade or skymodel, we want nodata = 0 and gdal byte
     # THIS WAS FOR SCALING, BUT SCALING DOESN'T WORK (SEE NOTE IN SKYMODEL)
@@ -472,12 +473,12 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         dtype = gdal.GDT_Float32
 
     # compression Options
-    jpeg_opts = ["compress=jpeg", "interleave=pixel", "photometric=ycbcr",
-                 "tiled=yes", "jpeg_quality=90", "bigtiff=yes"]
-    #lzw_opts = ["compress=lzw", "tiled=yes", "bigtiff=yes"]
+    jpeg_opts = ['compress=jpeg', 'interleave=pixel', 'photometric=ycbcr',
+                 'tiled=yes', 'jpeg_quality=90', 'bigtiff=yes']
+    #lzw_opts = ['compress=lzw', 'tiled=yes', 'bigtiff=yes']
     # Both lzw and deflate occasionally cause bad chunks in the final output;
     # disabling until I can figure out why.
-    lzw_opts = ["tiled=yes", "bigtiff=yes"]
+    lzw_opts = ['tiled=yes', 'bigtiff=yes']
     # Use jpeg compression opts if three bands, otherwise lzw
     if bands == 3 and driver.LongName == 'GeoTIFF':
         opts = jpeg_opts
@@ -494,17 +495,17 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         t_band.SetNoDataValue(t_nodata)
 
     if verbose:
-        #print("Method: {}".format(method))
-        print("Options:")
+        #print('Method: {}'.format(method))
+        print('Options:')
         for opt in options:
-            print("\t{}: {}".format(opt, options[opt]))
-        print("Preparing output file {}...".format(out_dem_path))
-        print("\tOutput dimensions: {} rows by {} columns.".format(rows, cols))
-        print("\tOutput data type: {}".format(
+            print('\t{}: {}'.format(opt, options[opt]))
+        print('Preparing output file {}...'.format(out_dem_path))
+        print('\tOutput dimensions: {} rows by {} columns.'.format(rows, cols))
+        print('\tOutput data type: {}'.format(
             gdal_array.GDALTypeCodeToNumericTypeCode(dtype)))
-        print("\tOutput size: {}".format(
+        print('\tOutput size: {}'.format(
             sizeof_fmt(bands * rows * cols * gdal.GetDataTypeSize(dtype) / 8)))
-        print("\tOutput NoData Value: {}".format(t_nodata))
+        print('\tOutput NoData Value: {}'.format(t_nodata))
 
     # Close target file handle (causes entire file to be written to disk)
     t_band = None
@@ -558,7 +559,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
 
             # These are specific to each chunk
             chunk.progress = progress
-            chunk.tile = "{}-{}".format(i, j)
+            chunk.tile = '{}-{}'.format(i, j)
             # x/y_start are the starting position of the original chunk
             # before adjusting the dimensions to read in the super array;
             # they are not used directly in the ReadAsArray() calls but are
@@ -592,7 +593,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     # Create lock to lock s_fh and t_fh reads and writes
     l = mp.Lock()
 
-    print("\nProcessing chunks...")
+    print('\nProcessing chunks...')
     # Call pool.map with the lock initializer method, super array
     # processor, and list of chunk objects.
     # chunksize=1 keeps the input processing more-or-less in order
@@ -607,7 +608,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
                  initargs=(l,),
                  maxtasksperchild=10
                  ) as pool:
-        pool.map(ProcessSuperArray, iterables, chunksize=1)
+        pool.map(process_super_array, iterables, chunksize=1)
 
     finish = datetime.datetime.now() - start
     if verbose:
@@ -620,7 +621,7 @@ def process_args():
     # Main Variables
 
     # Global variables
-    # These are read in as part of opening the file in ProcessSuperArray() but will
+    # These are read in as part of opening the file in process_super_array() but will
     # be used by WriteASC() as part of the mdenoise() call
     # s_nodata is used several places; really needs to have been set in input DEM.
     # global cell_size
@@ -719,15 +720,15 @@ def process_args():
         ParallelRCP(input_DEM, out_file, chunk_size, overlap, method, arg_dict,
                     num_threads, verbose)
     except Exception as e:
-        print("\n--- Error ---")
+        print('\n--- Error ---')
         print(e)
         if verbose:
-            print("\n")
+            print('\n')
             print(traceback.format_exc())
 
 
 # Need this check for multiprocessing in windows
-if "__main__" in __name__:
+if '__main__' in __name__:
     process_args()
 
 # General Notes

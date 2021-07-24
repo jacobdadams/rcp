@@ -5,3 +5,7 @@ disable=bad-continuation,broad-except
 ignore-patterns=test_.*?py
 # Good variable names which should always be accepted, separated by a comma
 good-names=i,j,k,ex,Run,_,x,y
+
+[MISCELLANEOUS]
+# List of note tags to take in consideration, separated by a comma.
+notes=FIXME,XXX
