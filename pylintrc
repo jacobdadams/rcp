@@ -4,7 +4,7 @@ max-line-length=120
 disable=bad-continuation,broad-except
 ignore-patterns=test_.*?py
 # Good variable names which should always be accepted, separated by a comma
-good-names=i,j,k,ex,Run,_,x,y
+good-names=i,j,k,e,Run,_,x,y
 
 [MISCELLANEOUS]
 # List of note tags to take in consideration, separated by a comma.

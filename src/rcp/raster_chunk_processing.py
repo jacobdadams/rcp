@@ -196,18 +196,26 @@ def process_super_array(chunk_info):
     percent = (progress / total_chunks) * 100
     elapsed = datetime.datetime.now() - starttime
     if verbose:
-        print('Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4} Indices: [{5}:{6}, {7}:{8}] PID: {9}'.format(
-            tile, progress, total_chunks, percent, elapsed, read_y_off, read_y_off + read_y_size, read_x_off, read_x_off + read_x_size, mp.current_process().pid)
+        print(
+            'Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4} Indices: [{5}:{6}, {7}:{8}] PID: {9}'.format(
+                tile, progress, total_chunks, percent, elapsed, read_y_off, read_y_off + read_y_size, read_x_off,
+                read_x_off + read_x_size,
+                mp.current_process().pid
             )
+        )
     else:
-        print('Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4}'.format(tile, progress, total_chunks, percent, elapsed))
+        print(
+            'Tile {0}: {1:d} of {2:d} ({3:0.3f}%) started at {4}'.format(
+                tile, progress, total_chunks, percent, elapsed
+            )
+        )
 
     for band in range(1, bands + 1):
         # We perform the read calls within the multiprocessing portion to avoid
         # passing the entire raster to each process. This means we need to
         # acquire a lock prior to reading in the chunk so that we're not trying
         # to read the file at the same time.
-        with lock:
+        with LOCK:
             # ===== LOCK HERE =====
             # Open source file handle
             s_fh = gdal.Open(source_dem_path, gdal.GA_ReadOnly)
@@ -215,8 +223,7 @@ def process_super_array(chunk_info):
 
             # Master read call. read_ variables have been changed for edge
             # cases if needed
-            read_array = s_band.ReadAsArray(read_x_off, read_y_off,
-                                            read_x_size, read_y_size)
+            read_array = s_band.ReadAsArray(read_x_off, read_y_off, read_x_size, read_y_size)
             # Arrays are of form [rows, cols], thus [y, x] when slicing
 
             s_band = None
@@ -245,12 +252,13 @@ def process_super_array(chunk_info):
         elif method == 'blur_toews':
             new_data = methods.blur_toews(super_array, s_nodata, options['radius'])
         elif method == 'mdenoise':
-            new_data = methods.mdenoise(super_array, s_nodata, cell_size, options['t'],
-                                options['n'], options['v'], tile, verbose)
+            new_data = methods.mdenoise(
+                super_array, s_nodata, cell_size, options['t'], options['n'], options['v'], tile, verbose
+            )
         elif method == 'clahe':
-            new_data = exposure.equalize_adapthist(super_array.astype(int),
-                                                   options['kernel_size'],
-                                                   options['clip_limit'])
+            new_data = exposure.equalize_adapthist(
+                super_array.astype(int), options['kernel_size'], options['clip_limit']
+            )
             new_data *= 255.0  # scale CLAHE from 0-1 to 0-255
         elif method == 'TPI':
             new_data = methods.TPI(super_array, s_nodata, options['radius'])
@@ -261,8 +269,7 @@ def process_super_array(chunk_info):
         elif method == 'test':
             new_data = super_array + 5
         else:
-            raise NotImplementedError('Method not implemented: {}'.format(
-                method))
+            raise NotImplementedError('Method not implemented: {}'.format(method))
 
         # Resulting array is a superset of the data; we need to strip off the
         # overlap before writing it
@@ -285,7 +292,7 @@ def process_super_array(chunk_info):
             # in read_sub_array==NoData get set to t_nodata)
             np.putmask(temp_array, read_sub_array == s_nodata, t_nodata)
 
-        with lock:
+        with LOCK:
             # ===== LOCK HERE =====
             # Open target file handle
             t_fh = gdal.Open(target_dem_path, gdal.GA_Update)
@@ -309,19 +316,18 @@ def process_super_array(chunk_info):
     temp_array = None
 
 
-def lock_init(l):
+def lock_init(lock):
     """
     Mini helper method that allows us to use a global lock accross a pool of
     processes. Used to safely read and write the input/output rasters.
-    l:              mp.lock() created and passed as part of mp.pool
+    lock:           mp.lock() created and passed as part of mp.pool
                     initialization
     """
-    global lock
-    lock = l
+    global LOCK
+    LOCK = lock
 
 
-def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
-                options, num_threads=1, verbose=False):
+def parallel_rcp(in_dem_path, out_dem_path, chunk_size, overlap, method, options, num_threads=1, verbose=False):
     """
     Breaks a raster into smaller chunks for easier processing. This method
     determines the file parameters, prepares the output parameter, calculates
@@ -394,8 +400,8 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
             overlap = 2 * options['kernel_size']
 
     elif method == 'TPI':
-        TPI_opts = ['radius']
-        for opt in TPI_opts:
+        tpi_opts = ['radius']
+        for opt in tpi_opts:
             if opt not in options or not options[opt]:
                 raise ValueError('Required option {} not provided for method {}.'.format(opt, method))
         if overlap < 2 * options['radius']:
@@ -423,8 +429,8 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         if verbose:
             print('Reading in luminance file {}'.format(options['lum_file']))
         lines = []
-        with open(options['lum_file'], 'r') as l:
-            reader = csv.reader(l)
+        with open(options['lum_file'], 'r') as lum_file:
+            reader = csv.reader(lum_file)
             for line in reader:
                 lines.append(line)
         options['lum_lines'] = lines
@@ -473,8 +479,9 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
         dtype = gdal.GDT_Float32
 
     # compression Options
-    jpeg_opts = ['compress=jpeg', 'interleave=pixel', 'photometric=ycbcr',
-                 'tiled=yes', 'jpeg_quality=90', 'bigtiff=yes']
+    jpeg_opts = [
+        'compress=jpeg', 'interleave=pixel', 'photometric=ycbcr', 'tiled=yes', 'jpeg_quality=90', 'bigtiff=yes'
+    ]
     #lzw_opts = ['compress=lzw', 'tiled=yes', 'bigtiff=yes']
     # Both lzw and deflate occasionally cause bad chunks in the final output;
     # disabling until I can figure out why.
@@ -501,10 +508,8 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
             print('\t{}: {}'.format(opt, options[opt]))
         print('Preparing output file {}...'.format(out_dem_path))
         print('\tOutput dimensions: {} rows by {} columns.'.format(rows, cols))
-        print('\tOutput data type: {}'.format(
-            gdal_array.GDALTypeCodeToNumericTypeCode(dtype)))
-        print('\tOutput size: {}'.format(
-            sizeof_fmt(bands * rows * cols * gdal.GetDataTypeSize(dtype) / 8)))
+        print('\tOutput data type: {}'.format(gdal_array.GDALTypeCodeToNumericTypeCode(dtype)))
+        print('\tOutput size: {}'.format(sizeof_fmt(bands * rows * cols * gdal.GetDataTypeSize(dtype) / 8)))
         print('\tOutput NoData Value: {}'.format(t_nodata))
 
     # Close target file handle (causes entire file to be written to disk)
@@ -528,6 +533,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     total_chunks = (len(row_splits) - 1) * (len(col_splits) - 1)
     progress = 0
 
+    #: FIXME: rename f2 to overlap, change this check to match (f2 is a horrid var name)
     # Double the overlap just to be safe. This distance becomes one side of
     # the super_array beyond the wanted data (f2 <> x values <> f2)
     # if there's only one chunk, set overlap to 0 so that read indices
@@ -591,7 +597,7 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
             iterables.append(chunk)
 
     # Create lock to lock s_fh and t_fh reads and writes
-    l = mp.Lock()
+    lock = mp.Lock()
 
     print('\nProcessing chunks...')
     # Call pool.map with the lock initializer method, super array
@@ -603,17 +609,13 @@ def ParallelRCP(in_dem_path, out_dem_path, chunk_size, overlap, method,
     # necessarily the processing.
     # maxtasksperchild sets a limit on the number of tasks assigned to each
     # process, hopefully limiting memory leaks within each subprocess
-    with mp.Pool(processes=num_threads,
-                 initializer=lock_init,
-                 initargs=(l,),
-                 maxtasksperchild=10
-                 ) as pool:
+    with mp.Pool(processes=num_threads, initializer=lock_init, initargs=(lock,), maxtasksperchild=10) as pool:
         pool.map(process_super_array, iterables, chunksize=1)
 
     finish = datetime.datetime.now() - start
     if verbose:
         print(finish)
-    return(finish)
+    return finish
 
 
 def process_args():
@@ -628,7 +630,6 @@ def process_args():
     # global s_nodata
     # global mdenoise_path
     # mdenoise_path = r'c:\GIS\Installers\MDenoise.exe'
-
 
     # Required arguments:
     # Parent:
@@ -647,52 +648,64 @@ def process_args():
     #   -k clahe kernel size, int
     #   -l luminance file
 
-    args = argparse.ArgumentParser(usage='%(prog)s -m method [general options] [method specific options] infile outfile', description='Effectively divides arbitrarily large DEM rasters into chunks that will fit in memory and runs the specified processing method on each chunk, with parallel processing of the chunks available for significant runtime advantages. Current methods include smoothing algorithms (blur_mean, blur_gauss, and Sun et al\'s mdenoise), CLAHE contrast stretching, TPI, and Kennelly & Stewart\'s skymodel hillshade algorithm.')
-    all = args.add_argument_group('all', 'General options for all methods')
-    all.add_argument('-m', dest='method',
-                     choices=['blur_mean', 'blur_gauss', 'blur_toews',
-                              'mdenoise', 'hillshade', 'skymodel', 'clahe',
-                              'TPI'],
-                     help='Processing method')
-    all.add_argument('-o', dest='chunk_overlap', required=True, type=int,
-                     help='Chunk overlap size in pixels; try 25. Will be changed to 2*kernel size if less than 2*kernel size for relevant methods.')
-    all.add_argument('-s', dest='chunk_size', required=True, type=int,
-                     help='Chunk size in pixels; try 1500 for mdenoise')
-    all.add_argument('-p', dest='proc', default=1, type=int,
-                     help='Number of concurrent processes (default of 1)')
-    all.add_argument('--verbose', dest='verbose', default=False,
-                     help='Show detailed output', action='store_true')
+    args = argparse.ArgumentParser(
+        usage='%(prog)s -m method [general options] [method specific options] infile outfile',
+        description=
+        'Effectively divides arbitrarily large DEM rasters into chunks that will fit in memory and runs the specified processing method on each chunk, with parallel processing of the chunks available for significant runtime advantages. Current methods include smoothing algorithms (blur_mean, blur_gauss, and Sun et al\'s mdenoise), CLAHE contrast stretching, TPI, and Kennelly & Stewart\'s skymodel hillshade algorithm.'
+    )
+    general_args = args.add_argument_group('general', 'General options for all methods')
+    general_args.add_argument(
+        '-m',
+        dest='method',
+        choices=['blur_mean', 'blur_gauss', 'blur_toews', 'mdenoise', 'hillshade', 'skymodel', 'clahe', 'TPI'],
+        help='Processing method'
+    )
+    general_args.add_argument(
+        '-o',
+        dest='chunk_overlap',
+        required=True,
+        type=int,
+        help=
+        'Chunk overlap size in pixels; try 25. Will be changed to 2*kernel size if less than 2*kernel size for relevant methods.'
+    )
+    general_args.add_argument(
+        '-s', dest='chunk_size', required=True, type=int, help='Chunk size in pixels; try 1500 for mdenoise'
+    )
+    general_args.add_argument(
+        '-p', dest='proc', default=1, type=int, help='Number of concurrent processes (default of 1)'
+    )
+    general_args.add_argument(
+        '--verbose', dest='verbose', default=False, help='Show detailed output', action='store_true'
+    )
 
     kernel_args = args.add_argument_group('kernel', 'Kernel radius for blur_mean, blur_gauss, blur_toews, and TPI')
-    kernel_args.add_argument('-r', dest='radius',
-                             type=int, help='Kernel radius in pixels; try 15')
+    kernel_args.add_argument('-r', dest='radius', type=int, help='Kernel radius in pixels; try 15')
 
     blur_gauss_args = args.add_argument_group('blur_gauss', 'Gaussian blur options; also requires -r')
-    blur_gauss_args.add_argument('-d', dest='sigma', type=float, help='Standard deviation of the distribution (sigma). Controls amount of smoothing; try 1.')
+    blur_gauss_args.add_argument(
+        '-d',
+        dest='sigma',
+        type=float,
+        help='Standard deviation of the distribution (sigma). Controls amount of smoothing; try 1.'
+    )
 
     mdenoise_args = args.add_argument_group('mdenoise', 'Mesh Denoise (Sun et al, 2007) smoothing algorithm options')
-    mdenoise_args.add_argument('-n', dest='n', type=int,
-                               help='Iterations for Normal updating; try 10')
-    mdenoise_args.add_argument('-t', dest='t', type=float,
-                               help='Threshold; try .6')
-    mdenoise_args.add_argument('-v', dest='v', type=int,
-                               help='Iterations for Vertex updating; try 20')
+    mdenoise_args.add_argument('-n', dest='n', type=int, help='Iterations for Normal updating; try 10')
+    mdenoise_args.add_argument('-t', dest='t', type=float, help='Threshold; try .6')
+    mdenoise_args.add_argument('-v', dest='v', type=int, help='Iterations for Vertex updating; try 20')
 
     clahe_args = args.add_argument_group('clahe', 'Contrast Limited Adaptive Histogram Equalization (CLAHE) options')
-    clahe_args.add_argument('-c', dest='clip_limit', type=float,
-                            help='Clipping limit. Try 0.01; higher values give more contrast')
-    clahe_args.add_argument('-k', dest='kernel_size',
-                            type=int, help='Kernel size in pixels; try 30')
+    clahe_args.add_argument(
+        '-c', dest='clip_limit', type=float, help='Clipping limit. Try 0.01; higher values give more contrast'
+    )
+    clahe_args.add_argument('-k', dest='kernel_size', type=int, help='Kernel size in pixels; try 30')
 
     hs_args = args.add_argument_group('hs', 'Hillshade options')
-    hs_args.add_argument('-az', dest='az', type=int, default=315,
-                         help='Azimuth (default of 315)')
-    hs_args.add_argument('-alt', dest='alt', type=int, default=45,
-                         help='Altitude (default of 45)')
+    hs_args.add_argument('-az', dest='az', type=int, default=315, help='Azimuth (default of 315)')
+    hs_args.add_argument('-alt', dest='alt', type=int, default=45, help='Altitude (default of 45)')
 
     sky_args = args.add_argument_group('sky', 'Skymodel options')
-    sky_args.add_argument('-l', dest='lum_file',
-                          help='Luminance file with header lines removed')
+    sky_args.add_argument('-l', dest='lum_file', help='Luminance file with header lines removed')
 
     out_args = args.add_argument_group('out', 'Input/Output files')
     out_args.add_argument('infile', help='Input DEM')
@@ -702,7 +715,7 @@ def process_args():
 
     arg_dict = vars(arguments)  # serve the arguments as dictionary
 
-    input_DEM = arg_dict['infile']
+    input_dem = arg_dict['infile']
     out_file = arg_dict['outfile']
     chunk_size = arg_dict['chunk_size']
     #radius = arg_dict['radius']
@@ -717,8 +730,7 @@ def process_args():
             raise ValueError('Path to mdenoise executable must be set in settings.py')
         if arg_dict['method'] == 'mdenoise' and not os.path.isfile(settings.MDENOISE_PATH):
             raise FileNotFoundError('mdenoise executable {} not found'.format(settings.MDENOISE_PATH))
-        ParallelRCP(input_DEM, out_file, chunk_size, overlap, method, arg_dict,
-                    num_threads, verbose)
+        parallel_rcp(input_dem, out_file, chunk_size, overlap, method, arg_dict, num_threads, verbose)
     except Exception as e:
         print('\n--- Error ---')
         print(e)
