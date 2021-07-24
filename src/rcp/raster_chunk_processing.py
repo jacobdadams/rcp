@@ -51,15 +51,8 @@ import csv
 import datetime
 import traceback
 import os
-# import subprocess
-# import contextlib
-# import tempfile
-# import warnings
-# import math
 import multiprocessing as mp
 import numpy as np
-# import numba
-# from astropy.convolution import convolve_fft
 from skimage import exposure
 from osgeo import gdal, gdal_array
 
@@ -69,7 +62,31 @@ from . import settings
 
 # Just a simple class to hold the information about each chunk
 class Chunk:
-    pass
+
+    def __init__(self):
+        # These are specific to each chunk
+        self.progress = None
+        self.tile = None
+        self.x_start = None
+        self.y_start = None
+        self.x_end = None
+        self.y_end = None
+
+        # These are constant over the whole raster
+        self.s_nodata = None
+        self.t_nodata = None
+        self.cell_size = None
+        self.in_dem_path = None
+        self.out_dem_path = None
+        self.f2 = None
+        self.rows = None
+        self.cols = None
+        self.total_chunks = None
+        self.method = None
+        self.options = None
+        self.verbose = None
+        self.start_time = None
+        self.bands = None
 
 
 def sizeof_fmt(num, suffix='B'):
@@ -323,7 +340,7 @@ def lock_init(lock):
     lock:           mp.lock() created and passed as part of mp.pool
                     initialization
     """
-    global LOCK
+    global LOCK  #: pylint: disable=global-variable-undefined
     LOCK = lock
 
 
