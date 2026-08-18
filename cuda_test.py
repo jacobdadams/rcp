@@ -1,3 +1,32 @@
+#conda create -n cuda2 -y && activate cuda2
+# conda install -c conda-forge cuda-python numba jupyter gdal
+# |vvp
+# conda install -c conda-forge openjdk
+# |vvp
+# where java
+# |vvp -vm "C:\Users\jdadams\AppData\Local\Programs\ArcGIS\Pro\bin\Python\envs\cuda2\Library\bin\java.exe"
+# java
+# java -version
+# conda install -c conda-forge openjdk=8.*
+# |vvp -vm "C:\Users\jdadams\AppData\Local\Programs\ArcGIS\Pro\bin\Python\envs\cuda2\Library\bin\java.exe"
+# nvvp -vm "C:\Users\jdadams\AppData\Local\Programs\ArcGIS\Pro\bin\Python\envs\cuda2\Library\bin\java.exe"
+# set PATH=%PATH%;"c:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\extras\CUPTI\lib64"
+# |vvp
+# |et PATH
+# activate cuda
+# |ctivate cuda2
+# set PATH
+# |et path
+# |ctivate cuda2
+# set path
+# set PATH=%PATH%;c:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\extras\CUPTI\lib64
+# nvvp
+# |here python
+# |ython c:\gis\git\rcp\cuda_test.py
+# activate cuda2
+# python c:\gis\git\rcp\cuda_test.py
+
+
 import csv
 import math
 import os
@@ -211,6 +240,12 @@ def multiply_skyshade_kernel(hillshade_array, shadow_array, weight, output_array
     i, j = cuda.grid(2)
     if i < hillshade_array.shape[0] and j < hillshade_array.shape[1]:
         output_array[i, j] = output_array[i, j] + (hillshade_array[i, j] * shadow_array[i, j] * weight)
+
+
+#: Improvement ideas
+#: convert from double to float (64->32)
+#: Improve occupancy (kernel launch config?)- 16x16 seems to be a sweet spot
+#: See if shared memory can be used
 
 
 if __name__ == "__main__":
