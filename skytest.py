@@ -1,15 +1,16 @@
-from osgeo import gdal
-import numpy as np
-import os
-import warnings
 import csv
-import math
 import datetime
-import numba
+import math
+import os
 import sys
-from memory_profiler import profile
-import shadowing
+import warnings
 
+import numba
+import numpy as np
+from memory_profiler import profile
+from osgeo import gdal
+
+import shadowing
 
 # Notes:
 # Shading is memory intensive (lots of copies of the array), Shadowing is processor intensive.
@@ -17,21 +18,22 @@ import shadowing
 #   putting it into a single loop slows it down even further- 34s vs 24s for non-monolithic
 # The "return shaded*255" line holds onto a lot of memory- put the *255 in the body of the method.
 
-def sizeof_fmt(num, suffix='B'):
-    '''
+
+def sizeof_fmt(num, suffix="B"):
+    """
     Quick-and-dirty method for formating file size, from Sridhar Ratnakumar,
     https://stackoverflow.com/questions/1094841/reusable-library-to-get-human-readable-version-of-file-size.
-    '''
-    for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
+    """
+    for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
         if abs(num) < 1024.0:
             return "%3.1f %s%s" % (num, unit, suffix)
         num /= 1024.0
-    return "%.1f %s%s" % (num, 'Yi', suffix)
+    return "%.1f %s%s" % (num, "Yi", suffix)
 
 
 @numba.jit("f8[:,:](f4[:,:],f8,f8,f8,f8)", nopython=True)
 def hillshade_numba(in_array, az, alt, res, nodata):
-    '''
+    """
     Custom implmentation of hillshading, using the algorithm from the source
     code for gdaldem. The inputs and outputs are the same as in gdal or ArcGIS.
     in_array:       The input array, should be read using the supper_array
@@ -42,7 +44,7 @@ def hillshade_numba(in_array, az, alt, res, nodata):
                     as part of a parallel or multi-chunk process, each chunk
                     has different min and max values, which leads to different
                     stretching for each chunk.
-    '''
+    """
 
     # Create new array with s_nodata values set to np.nan (for edges)
     nan_array = np.where(in_array == nodata, np.nan, in_array)
@@ -51,10 +53,10 @@ def hillshade_numba(in_array, az, alt, res, nodata):
     shaded = np.zeros(nan_array.shape)
 
     # Conversion between mathematical and nautical azimuth
-    az = 90. - az
+    az = 90.0 - az
 
-    azrad = az * np.pi / 180.
-    altrad = alt * np.pi / 180.
+    azrad = az * np.pi / 180.0
+    altrad = alt * np.pi / 180.0
 
     sinalt = np.sin(altrad)
     cosaz = np.cos(azrad)
@@ -64,29 +66,27 @@ def hillshade_numba(in_array, az, alt, res, nodata):
     rows = nan_array.shape[0]
     cols = nan_array.shape[1]
 
-    for i in range(1, rows-1):  # ignoring edges right now by subsetting
-        for j in range(1, cols-1):
-            window = nan_array[i-1:i+2, j-1:j+2].flatten()
+    for i in range(1, rows - 1):  # ignoring edges right now by subsetting
+        for j in range(1, cols - 1):
+            window = nan_array[i - 1 : i + 2, j - 1 : j + 2].flatten()
 
-            x = ((window[2] + 2. * window[5] + window[8]) -
-                 (window[0] + 2. * window[3] + window[6])) / (8. * res)
+            x = ((window[2] + 2.0 * window[5] + window[8]) - (window[0] + 2.0 * window[3] + window[6])) / (8.0 * res)
 
-            y = ((window[6] + 2. * window[7] + window[8]) -
-                 (window[0] + 2. * window[1] + window[2])) / (8. * res)
+            y = ((window[6] + 2.0 * window[7] + window[8]) - (window[0] + 2.0 * window[1] + window[2])) / (8.0 * res)
 
             xx_plus_yy = x * x + y * y
             alpha = y * cosaz * cosalt - x * sinaz * cosalt
             shade = (sinalt - alpha) / np.sqrt(1 + xx_plus_yy)
 
-            shaded[i,j] = shade * 255
+            shaded[i, j] = shade * 255
 
     # scale from 0-1 to 0-255
     return shaded
 
 
-#@profile
+# @profile
 def hillshade(in_array, az, alt, res, nodata):
-    '''
+    """
     Custom implmentation of hillshading, using the algorithm from the source
     code for gdaldem. The inputs and outputs are the same as in gdal or ArcGIS.
     in_array:       The input array, should be read using the supper_array
@@ -97,7 +97,7 @@ def hillshade(in_array, az, alt, res, nodata):
                     as part of a parallel or multi-chunk process, each chunk
                     has different min and max values, which leads to different
                     stretching for each chunk.
-    '''
+    """
 
     # Create new array wsith s_nodata values set to np.nan (for edges)
     nan_array = np.where(in_array == nodata, np.nan, in_array)
@@ -106,10 +106,10 @@ def hillshade(in_array, az, alt, res, nodata):
     # y = np.zeros(nan_array.shape)
 
     # Conversion between mathematical and nautical azimuth
-    az = 90. - az
+    az = 90.0 - az
 
-    azrad = az * np.pi / 180.
-    altrad = alt * np.pi / 180.
+    azrad = az * np.pi / 180.0
+    altrad = alt * np.pi / 180.0
 
     x, y = np.gradient(nan_array, res, res, edge_order=2)
 
@@ -132,12 +132,12 @@ def hillshade(in_array, az, alt, res, nodata):
     # for var, obj in globals().items():
     #     print(var, sizeof_fmt(sys.getsizeof(obj)))
     # scale from 0-1 to 0-255
-    return shaded# * 255
+    return shaded  # * 255
 
 
 @numba.jit(nopython=True)
-def skymodel_numba(in_array, lum_lines, res, nodata):#, cell_size):
-    '''
+def skymodel_numba(in_array, lum_lines, res, nodata):  # , cell_size):
+    """
     Creates a unique hillshade based on a skymodel, implmenting the method
     defined in Kennelly and Stewart (2014), A Uniform Sky Illumination Model to
     Enhance Shading of Terrain and Urban Areas.
@@ -147,7 +147,7 @@ def skymodel_numba(in_array, lum_lines, res, nodata):#, cell_size):
     lum_lines:      The azimuth, altitude, and weight for each iteration of the
                     hillshade. Stored as an array lines, with each line being
                     an array of [az, alt, weight].
-    '''
+    """
 
     # initialize skyshade as 0's
     skyshade = np.zeros((in_array.shape))
@@ -160,7 +160,7 @@ def skymodel_numba(in_array, lum_lines, res, nodata):#, cell_size):
     in_array *= 5
     # Loop through luminance file lines to calculate multiple hillshades
     for l in range(0, lum_lines.shape[0]):
-    #for line in lum_lines:
+        # for line in lum_lines:
         az = lum_lines[l, 0]
         alt = lum_lines[l, 1]
         weight = lum_lines[l, 2]
@@ -173,10 +173,10 @@ def skymodel_numba(in_array, lum_lines, res, nodata):#, cell_size):
         shaded = np.zeros(nan_array.shape)
 
         # Conversion between mathematical and nautical azimuth
-        az = 90. - az
+        az = 90.0 - az
 
-        azrad = az * np.pi / 180.
-        altrad = alt * np.pi / 180.
+        azrad = az * np.pi / 180.0
+        altrad = alt * np.pi / 180.0
 
         sinalt = math.sin(altrad)
         cosaz = math.cos(azrad)
@@ -188,7 +188,7 @@ def skymodel_numba(in_array, lum_lines, res, nodata):#, cell_size):
 
         # Shadow variables
         delta_j = math.cos(azrad)
-        delta_i = -1. * math.sin(azrad)
+        delta_i = -1.0 * math.sin(azrad)
         tanaltrad = math.tan(altrad)
 
         mult_size = 1
@@ -198,24 +198,25 @@ def skymodel_numba(in_array, lum_lines, res, nodata):#, cell_size):
         max_elev = np.max(in_array)
 
         # Just loop once, doing both hillshade and shadow
-        for i in range(1, rows-1):  # ignoring edges right now by subsetting
-            for j in range(1, cols-1):
-
+        for i in range(1, rows - 1):  # ignoring edges right now by subsetting
+            for j in range(1, cols - 1):
                 # ===================
                 # Hillshade algorithm
-                window = nan_array[i-1:i+2, j-1:j+2].flatten()
+                window = nan_array[i - 1 : i + 2, j - 1 : j + 2].flatten()
 
-                x = ((window[2] + 2. * window[5] + window[8]) -
-                     (window[0] + 2. * window[3] + window[6])) / (8. * res)
+                x = ((window[2] + 2.0 * window[5] + window[8]) - (window[0] + 2.0 * window[3] + window[6])) / (
+                    8.0 * res
+                )
 
-                y = ((window[6] + 2. * window[7] + window[8]) -
-                     (window[0] + 2. * window[1] + window[2])) / (8. * res)
+                y = ((window[6] + 2.0 * window[7] + window[8]) - (window[0] + 2.0 * window[1] + window[2])) / (
+                    8.0 * res
+                )
 
                 xx_plus_yy = x * x + y * y
                 alpha = y * cosaz * cosalt - x * sinaz * cosalt
                 shade = (sinalt - alpha) / np.sqrt(1 + xx_plus_yy)
 
-                shaded[i,j] = shade * 255
+                shaded[i, j] = shade * 255
 
                 # ================
                 # Shadow algorithm
@@ -240,7 +241,7 @@ def skymodel_numba(in_array, lum_lines, res, nodata):#, cell_size):
 
                     # distance for elevation check is distance in cells (idx_i/j), not distance along the path
                     # critical height is the elevation that is directly in the path of the sun at given alt/az
-                    idx_distance = math.sqrt((i - idx_i)**2 + (j - idx_j)**2)
+                    idx_distance = math.sqrt((i - idx_i) ** 2 + (j - idx_j) ** 2)
                     # path_distance = math.sqrt((i - next_i)**2 + (j - next_j)**2)
                     critical_height = idx_distance * tanaltrad * res + point_elev
 
@@ -248,7 +249,7 @@ def skymodel_numba(in_array, lum_lines, res, nodata):#, cell_size):
                     in_height = critical_height < max_elev
                     # in_distance = path_distance * res < max_distance
 
-                    if in_bounds and in_height: # and in_distance:
+                    if in_bounds and in_height:  # and in_distance:
                         next_elev = in_array[idx_i, idx_j]
                         if next_elev > point_elev and next_elev > critical_height:
                             shadow_array[i, j] = 0
@@ -312,16 +313,15 @@ def skymodel_numba(in_array, lum_lines, res, nodata):#, cell_size):
         #                     # print(p)
         #                     break  # We're done with this point, move on to the next
 
-        #shadowed = shadows(in_array, az, alt, res, nodata)
+        # shadowed = shadows(in_array, az, alt, res, nodata)
         print("combining...")
         skyshade = skyshade + shaded * shadow_array
-
 
     return skyshade
 
 
-def skymodel(in_array, lum_lines, res, nodata):#, cell_size):
-    '''
+def skymodel(in_array, lum_lines, res, nodata):  # , cell_size):
+    """
     Creates a unique hillshade based on a skymodel, implmenting the method
     defined in Kennelly and Stewart (2014), A Uniform Sky Illumination Model to
     Enhance Shading of Terrain and Urban Areas.
@@ -331,7 +331,7 @@ def skymodel(in_array, lum_lines, res, nodata):#, cell_size):
     lum_lines:      The azimuth, altitude, and weight for each iteration of the
                     hillshade. Stored as an array lines, with each line being
                     an array of [az, alt, weight].
-    '''
+    """
 
     # initialize skyshade as 0's
     skyshade = np.zeros((in_array.shape), dtype=np.float32)
@@ -354,11 +354,11 @@ def skymodel(in_array, lum_lines, res, nodata):#, cell_size):
         # shade = hillshade_numba(in_array, az, alt, res, nodata) * weight
         shade = hillshade(in_array[:], az, alt, res, nodata) * weight
         # print("shadowing...")
-        shadowed = shadows(in_array, az, alt, res, nodata*5)
+        shadowed = shadows(in_array, az, alt, res, nodata * 5)
         # shadowed = shadowing.shadows(in_array, az, alt, res, 0, nodata*5)
         # print("combining...")
 
-        skyshade += (shade * shadowed)
+        skyshade += shade * shadowed
         # print(np.nanmean(skyshade))
         # for var, obj in locals().items():
         #     print(var, sizeof_fmt(sys.getsizeof(obj)))
@@ -379,17 +379,17 @@ def shadows(in_array, az, alt, res, overlap, nodata):
     max_elev = np.max(in_array)
     # max_distance = 500.
 
-    az = 90. - az  # convert from 0 = north, cw to 0 = east, ccw
+    az = 90.0 - az  # convert from 0 = north, cw to 0 = east, ccw
 
-    azrad = az * np.pi / 180.
-    altrad = alt * np.pi / 180.
+    azrad = az * np.pi / 180.0
+    altrad = alt * np.pi / 180.0
     delta_j = math.cos(azrad)  # these are switched sin for cos because of 90-az above
-    delta_i = -1. * math.sin(azrad)  # these are switched sin for cos because of 90-az above
+    delta_i = -1.0 * math.sin(azrad)  # these are switched sin for cos because of 90-az above
     tanaltrad = math.tan(altrad)
-    oneoverres = 1. / res
+    oneoverres = 1.0 / res
 
     # Mult size is in array units, not georef units
-    mult_size = .5
+    mult_size = 0.5
     max_steps = 600
 
     counter = 0
@@ -501,10 +501,7 @@ def shadows(in_array, az, alt, res, overlap, nodata):
             # start calculating next point from the source point
             # shadow = 1  # 0 if shadowed, 1 if not
 
-
-
             for step in range(1, max_steps):  # start at a step of 1- a point cannot be shadowed by itself
-
                 iterations += 1
 
                 # No need to continue if it's already shadowed
@@ -530,16 +527,16 @@ def shadows(in_array, az, alt, res, overlap, nodata):
 
                 # critical height, distances[][0] is already in georeffed units
                 # [step-1] because distance[0] is already one step away from the start
-                critical_height = distances[step-1][0] + point_elev
+                critical_height = distances[step - 1][0] + point_elev
 
                 # idx_i/j are indices of array corresponding to current position + y/x distances
-                idx_i = int(round(i + distances[step-1][1]))
-                idx_j = int(round(j + distances[step-1][2]))
+                idx_i = int(round(i + distances[step - 1][1]))
+                idx_j = int(round(j + distances[step - 1][2]))
 
                 in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
                 in_height = critical_height < max_elev
                 # in_distance = path_distance * res < max_distance
-                #print(in_bounds)
+                # print(in_bounds)
 
                 # set to shaded if out of bounds
                 # if in_bounds is False:
@@ -557,8 +554,8 @@ def shadows(in_array, az, alt, res, overlap, nodata):
 
                         # set all array indices in between our found shadowing index and the source index to shadowed
                         for step2 in range(1, step):
-                            i2 = int(round(i + distances[step2-1][1]))
-                            j2 = int(round(j + distances[step2-1][2]))
+                            i2 = int(round(i + distances[step2 - 1][1]))
+                            j2 = int(round(j + distances[step2 - 1][2]))
                             shadow_array[i2, j2] = 0
                         # #print(step)
                         break  # We're done with this point, move on to the next
@@ -568,63 +565,63 @@ def shadows(in_array, az, alt, res, overlap, nodata):
     print(already_shadowed)
     return shadow_array
 
-            # while keep_going:  # this inner loop loops through the possible values for each path
-            #     # Figure out next point along the path
-            #     # delta_j = math.cos(azrad) * res
-            #     # delta_i = math.sin(azrad) * res
-            #     next_i = prev_i + delta_i
-            #     next_j = prev_j + delta_j
-            #     # Update prev_i/j for next go-around
-            #     prev_i = next_i
-            #     prev_j = next_j
-            #
-            #     # We need integar indexes for the array
-            #     idx_i = int(round(next_i))
-            #     idx_j = int(round(next_j))
-            #
-            #     shadow = 1  # 0 if shadowed, 1 if not
-            #
-            #     # distance for elevation check is distance from cell centers (idx_i/j), not distance along the path
-            #     # critical height is the elevation that is directly in the path of the sun at given alt/az
-            #     idx_distance = math.sqrt((i - idx_i)**2 + (j - idx_j)**2)
-            #     path_distance = math.sqrt((i - next_i)**2 + (j - next_j)**2)
-            #     critical_height = idx_distance * tanaltrad * res + point_elev
-            #
-            #
-            #     in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
-            #     in_height = critical_height < max_elev
-            #     in_distance = path_distance * res < max_distance
-            #     #print("{}, {}, {}".format(in_bounds, in_height, in_distance))
-            #
-            #     if in_bounds and in_height and in_distance:
-            #     # bounds check (array bounds, elevation check)
-            #     # if idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols and critical_height < max_elev:
-            #         next_elev = in_array[idx_i, idx_j]
-            #         if next_elev > point_elev:  # only check if the next elev is greater than the point elev
-            #             if next_elev > critical_height:
-            #                 shadow = 0
-            #                 keep_going = False  # don't bother continuing to check
-            #
-            #     else:
-            #         keep_going = False  # our next index would be out of bounds, we've reached the edge of the array
-            #
-            #
-            #     #print("i:{}, j:{}; idx_i:{}, idx_j:{}; idx_distance:{}, critical_height:{}, delta_i:{}, delta_j:{}".format(i, j, idx_i, idx_j, idx_distance, critical_height, delta_i, delta_j))
-            #
-            # shadow_array[i, j] = shadow  # assign shadow value to output array
-            # #print("{}, {}: {}".format(i, j, shadow))
+    # while keep_going:  # this inner loop loops through the possible values for each path
+    #     # Figure out next point along the path
+    #     # delta_j = math.cos(azrad) * res
+    #     # delta_i = math.sin(azrad) * res
+    #     next_i = prev_i + delta_i
+    #     next_j = prev_j + delta_j
+    #     # Update prev_i/j for next go-around
+    #     prev_i = next_i
+    #     prev_j = next_j
+    #
+    #     # We need integar indexes for the array
+    #     idx_i = int(round(next_i))
+    #     idx_j = int(round(next_j))
+    #
+    #     shadow = 1  # 0 if shadowed, 1 if not
+    #
+    #     # distance for elevation check is distance from cell centers (idx_i/j), not distance along the path
+    #     # critical height is the elevation that is directly in the path of the sun at given alt/az
+    #     idx_distance = math.sqrt((i - idx_i)**2 + (j - idx_j)**2)
+    #     path_distance = math.sqrt((i - next_i)**2 + (j - next_j)**2)
+    #     critical_height = idx_distance * tanaltrad * res + point_elev
+    #
+    #
+    #     in_bounds = idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols
+    #     in_height = critical_height < max_elev
+    #     in_distance = path_distance * res < max_distance
+    #     #print("{}, {}, {}".format(in_bounds, in_height, in_distance))
+    #
+    #     if in_bounds and in_height and in_distance:
+    #     # bounds check (array bounds, elevation check)
+    #     # if idx_i >= 0 and idx_i < rows and idx_j >= 0 and idx_j < cols and critical_height < max_elev:
+    #         next_elev = in_array[idx_i, idx_j]
+    #         if next_elev > point_elev:  # only check if the next elev is greater than the point elev
+    #             if next_elev > critical_height:
+    #                 shadow = 0
+    #                 keep_going = False  # don't bother continuing to check
+    #
+    #     else:
+    #         keep_going = False  # our next index would be out of bounds, we've reached the edge of the array
+    #
+    #
+    #     #print("i:{}, j:{}; idx_i:{}, idx_j:{}; idx_distance:{}, critical_height:{}, delta_i:{}, delta_j:{}".format(i, j, idx_i, idx_j, idx_distance, critical_height, delta_i, delta_j))
+    #
+    # shadow_array[i, j] = shadow  # assign shadow value to output array
+    # #print("{}, {}: {}".format(i, j, shadow))
 
     # return shadow_array
 
 
 # variables
-csv_path = r'C:\GIS\Data\Elevation\Uintahs\test2_nohdr.csv'
-in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest.tif'
+csv_path = r"C:\GIS\Data\Elevation\Uintahs\test2_nohdr.csv"
+in_dem_path = r"C:\GIS\Data\Elevation\Uintahs\utest.tif"
 # in_dem_path = r'C:\GIS\Data\Elevation\Uintahs\uintahs_fft60_sub.tif'
-out_dem_path = r'C:\GIS\Data\Elevation\Uintahs\utest_sky_1x600_test2_jit_old.tif'
+out_dem_path = r"C:\GIS\Data\Elevation\Uintahs\utest_sky_1x600_test2_jit_old.tif"
 
-alt = 45.
-az = 315.
+alt = 45.0
+az = 315.0
 
 start = datetime.datetime.now()
 
@@ -632,15 +629,15 @@ gdal.UseExceptions()
 
 lines = []
 
-with open(csv_path, 'r') as l:
+with open(csv_path, "r") as l:
     reader = csv.reader(l)
     for line in reader:
         lines.append([float(line[0]), float(line[1]), float(line[2])])
 
 nplines = np.zeros((len(lines), 3))
 for i in range(0, len(lines)):
-    for j in range(0,3):
-        nplines[i,j] = lines[i][j]
+    for j in range(0, 3):
+        nplines[i, j] = lines[i][j]
 
 # Get source file metadata (dimensions, driver, proj, cell size, nodata)
 print("Processing {0:s}...".format(in_dem_path))
@@ -671,10 +668,10 @@ s_fh = None
 
 print("Processing array")
 
-#shade = hillshade_numba(s_data, az, alt, cell_size)
+# shade = hillshade_numba(s_data, az, alt, cell_size)
 # shadowed = shadows(s_data, az, alt, cell_size)
 # mult = shade * shadowed
-#sky = skymodel_numba(s_data, nplines, cell_size, s_nodata)
+# sky = skymodel_numba(s_data, nplines, cell_size, s_nodata)
 sky = skymodel(s_data[:], lines, cell_size, s_nodata)
 # Test is 225 az, 25 alt
 # shad = shadows(s_data, az, alt, cell_size)
@@ -684,8 +681,8 @@ out_array = sky
 print("Writing output array")
 # Set up target file in preparation for future writes
 # If we've been given a vrt as a source, force the output to be geotiff
-if driver.LongName == 'Virtual Raster':
-    driver = gdal.GetDriverByName('gtiff')
+if driver.LongName == "Virtual Raster":
+    driver = gdal.GetDriverByName("gtiff")
 # if os.path.exists(out_dem_path):
 #     raise IOError("Output file {} already exists.".format(out_dem_path))
 
